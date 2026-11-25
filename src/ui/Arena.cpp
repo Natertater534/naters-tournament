@@ -25,6 +25,7 @@ namespace nt::ui {
         float outQuad(float x) { return 1.f - (1.f - x) * (1.f - x); }
         float inQuad(float x) { return x * x; }
         float lerpf(float a, float b, float t) { return a + (b - a) * t; }
+        CCPoint lerpp(CCPoint a, CCPoint b, float t) { return a + (b - a) * t; }
 
         // the swoosh a swing leaves: a crescent around the hand, out at the blade's reach
         void slashFx(CCNode* parent, CCPoint hand, int facing, float midAngle, float reach, ccColor3B color,
@@ -118,7 +119,7 @@ namespace nt::ui {
 
         void release(Avatar* av, CCPoint seat) {
             av->setPosition(seat);
-            if (av->hasSword()) av->swordTo(kRest, .15f);
+            av->swordRest(.15f);
             av->busy = false;
         }
 
@@ -162,6 +163,9 @@ namespace nt::ui {
             float fwdA = 0.f, fwdB = 0.f, angA = kRest, angB = kRest;
             bool impactNow = false;
 
+            CCPoint handA {0.f, 0.f}, handB {0.f, 0.f};
+            float leanA = 0.f, leanB = 0.f;
+
             if (m_kind == Kind::Standoff) {
                 // a half step back with the blade up, then in again
                 float s = std::sin(ph * kPi);
@@ -169,33 +173,48 @@ namespace nt::ui {
                 fwdB = -2.2f * sc * s * m_shuffleB;
                 angA = lerpf(kRest, 50.f, .8f * s * m_shuffleA);
                 angB = lerpf(kRest, 50.f, .8f * s * m_shuffleB);
+                leanA = -4.f * s * m_shuffleA;
+                leanB = -4.f * s * m_shuffleB;
                 if (!m_hopped && ph > .15f) {
                     m_hopped = true;
                     (m_hopper == 0 ? a : b)->hop(6.f * std::max(.6f, sc), .26f);
                 }
             } else {
                 float gap = std::abs(m_sb.x - m_sa.x);
-                float lunge = gap * .24f;
-                float lean = -3.5f * sc;
-                float atkFwd, atkAng;
+                // a blow that lands carries the blade into the other body; a blocked one
+                // meets the other blade halfway
+                float lunge = m_hit ? std::clamp(gap - 43.f * sc, 2.f * sc, gap * .45f) : gap * .18f;
+                float back = -3.5f * sc;
+                CCPoint up {-14.5f, 16.f};  // hand raised over the head
+                CCPoint thrown {2.f, .5f};  // hand thrown forward at the end of the swing
+                float atkFwd, atkAng, atkLean;
+                CCPoint atkHand;
                 if (ph < .26f) {
-                    // wind-up: lean away, blade back over the shoulder
+                    // wind-up: lean away, sword raised up behind the head
                     float u = outQuad(seg(ph, 0.f, .26f));
-                    atkFwd = lean * u;
-                    atkAng = lerpf(kRest, -80.f, u);
+                    atkFwd = back * u;
+                    atkAng = lerpf(kRest, -55.f, u);
+                    atkHand = lerpp({0.f, 0.f}, up, u);
+                    atkLean = -9.f * u;
                 } else if (ph < .34f) {
-                    // the strike: lunge in, blade whips round
+                    // the strike: lunge in, blade whips over and down
                     float u = inQuad(seg(ph, .26f, .34f));
-                    atkFwd = lerpf(lean, lunge, u);
-                    atkAng = lerpf(-80.f, m_end, u);
+                    atkFwd = lerpf(back, lunge, u);
+                    atkAng = lerpf(-55.f, m_end, u);
+                    atkHand = lerpp(up, thrown, u);
+                    atkLean = lerpf(-9.f, 10.f, u);
                 } else if (ph < .48f) {
                     atkFwd = lunge;
                     // a blocked blade bounces off the other one; a landed one follows through
                     atkAng = m_end - (m_hit ? -6.f : 18.f) * std::sin(seg(ph, .34f, .48f) * kPi);
+                    atkHand = thrown;
+                    atkLean = 10.f;
                 } else {
                     float u = smooth(seg(ph, .48f, .84f));
                     atkFwd = lerpf(lunge, 0.f, u);
                     atkAng = lerpf(m_end, kRest, u);
+                    atkHand = lerpp(thrown, {0.f, 0.f}, u);
+                    atkLean = lerpf(10.f, 0.f, u);
                 }
                 // the defender brings the blade up to meet it, or is too late
                 float guard = m_hit ? 16.f : 46.f;
@@ -204,12 +223,14 @@ namespace nt::ui {
                 else if (ph < .3f) defAng = lerpf(kRest, guard, smooth(seg(ph, .12f, .3f)));
                 else if (ph < .52f) defAng = guard;
                 else defAng = lerpf(guard, kRest, smooth(seg(ph, .52f, .84f)));
-                float defFwd = 0.f;
+                float defFwd = 0.f, defLean = 0.f;
                 float after = (ph - .34f) * m_period;  // seconds since the blow
                 if (after > 0.f) {
                     defAng += (m_hit ? -42.f : -16.f) * std::exp(-after * 9.f);
+                    float rise = 1.f - std::exp(-after * 45.f);
                     float push = (m_hit ? 6.5f : 2.8f) * sc;
-                    defFwd = -push * (1.f - std::exp(-after * 45.f)) * std::exp(-after * 4.5f);
+                    defFwd = -push * rise * std::exp(-after * 4.5f);
+                    defLean = (m_hit ? -14.f : -5.f) * rise * std::exp(-after * 6.f);
                 }
                 if (!m_swished && ph >= .26f) {
                     m_swished = true;
@@ -220,9 +241,11 @@ namespace nt::ui {
                     impactNow = true;
                 }
                 if (m_attacker == 0) {
-                    fwdA = atkFwd, angA = atkAng, fwdB = defFwd, angB = defAng;
+                    fwdA = atkFwd, angA = atkAng, handA = atkHand, leanA = atkLean;
+                    fwdB = defFwd, angB = defAng, leanB = defLean;
                 } else {
-                    fwdB = atkFwd, angB = atkAng, fwdA = defFwd, angA = defAng;
+                    fwdB = atkFwd, angB = atkAng, handB = atkHand, leanB = atkLean;
+                    fwdA = defFwd, angA = defAng, leanA = defLean;
                 }
             }
             // a faces right, b faces left: "forward" is +x for a and -x for b
@@ -230,6 +253,10 @@ namespace nt::ui {
             b->setPosition(m_sb - ccp(fwdB, 0.f));
             a->setSwordAngle(angA);
             b->setSwordAngle(angB);
+            a->setHandOffset(handA);
+            b->setHandOffset(handB);
+            a->setLean(leanA);
+            b->setLean(leanB);
             if (impactNow) {
                 if (m_attacker == 0) this->impact(a.data(), b.data(), 1);
                 else this->impact(b.data(), a.data(), -1);
@@ -813,7 +840,7 @@ namespace nt::ui {
             a->stopActionByTag(kMoveTag);
             if (champ && m_trophy) seat = m_trophy->getPosition() + ccp(0.f, 18.f);
             // the beaten lie where the final blow knocked them
-            if (out && deepest->done()) seat.x += (which == 1 ? -1.f : 1.f) * kKnockBack * sc;
+            if (out && deepest->done() && deepest->why != "bye") seat.x += (which == 1 ? 1.f : -1.f) * kKnockBack * sc;
             a->setZOrder(out ? 9 : 10);
             if (animate && ccpDistance(a->getPosition(), seat) > 1.f) {
                 auto* move = CCEaseInOut::create(CCMoveTo::create(.45f, seat), 2.f);
@@ -1172,26 +1199,30 @@ namespace nt::ui {
         float sc = this->bracketScale();
         int nextWhich = slot % 2 == 0 ? 1 : 2;
         auto to = this->seatPos(round + 1, slot / 2, nextWhich);
-        int side = this->sideOf(round, slot);
         MarchInfo mi;
         mi.avatar = WeakRef<Avatar>(a);
         mi.key = {round, slot};
-        mi.pts.push_back(a->getPosition());
+        auto from = a->getPosition();
+        mi.pts.push_back(from);
         mi.hops.push_back(0.f);
-        // the inner player hops over the one they just beat to get onto the path
-        bool inner = (side < 0 && which == 1) || (side > 0 && which == 2);
-        mi.pts.push_back(line[0]);
-        mi.hops.push_back(inner ? 22.f * sc + 8.f : 0.f);
-        mi.litFrom = 1;
+        // onto the path (unless the final cut already carried them past its start),
+        // hopping over the one they just beat if they're in the way
+        float out = line[1].x > line[0].x ? 1.f : -1.f;
+        bool onPath = (from.x - line[0].x) * out >= 0.f && std::abs(from.y - line[0].y) < 2.f;
+        if (!onPath) {
+            mi.pts.push_back(line[0]);
+            mi.hops.push_back(this->inTheWay(a, from.x, line[0].x, line[0].y) ? 22.f * sc + 8.f : 0.f);
+        }
+        mi.litStart = line[0];
+        mi.litFrom = mi.pts.size();
         for (size_t i = 1; i < line.size(); ++i) {
             mi.pts.push_back(line[i]);
             mi.hops.push_back(0.f);
         }
         mi.litTo = mi.pts.size() - 1;
-        // onto the next stage, over the near spot if theirs is the far one
-        bool far = (side < 0 && nextWhich == 2) || (side > 0 && nextWhich == 1);
+        // onto the next stage, over whoever already waits there if theirs is the far spot
         mi.pts.push_back(to);
-        mi.hops.push_back(far ? 20.f * sc + 6.f : 0.f);
+        mi.hops.push_back(this->inTheWay(a, line.back().x, to.x, to.y) ? 20.f * sc + 6.f : 0.f);
         mi.done = std::move(done);
         m_marching.insert(mi.key);
         this->drawLines(m_state);
@@ -1200,6 +1231,17 @@ namespace nt::ui {
         this->trail(a, iconColor(a->player().icon.p), length / kMarchSpeed + .2f);
         fx::play("whoosh", .7f);
         m_marches.push_back(std::move(mi));
+    }
+
+    bool Arena::inTheWay(Avatar* self, float x0, float x1, float y) const {
+        float lo = std::min(x0, x1), hi = std::max(x0, x1);
+        float pad = 10.f * this->bracketScale();
+        for (auto const& [acc, other] : m_avatars) {
+            if (!other || other == self || !other->isVisible()) continue;
+            auto p = other->getPosition();
+            if (std::abs(p.y - y) < 6.f && p.x > lo - pad && p.x < hi + pad) return true;
+        }
+        return false;
     }
 
     void Arena::updateMarches(float dt) {
@@ -1237,8 +1279,8 @@ namespace nt::ui {
                 a->setPosition(pos);
 
                 // light the path behind them
-                if (mi.seg > mi.litFrom) {
-                    std::vector<CCPoint> lit;
+                if (mi.seg >= mi.litFrom) {
+                    std::vector<CCPoint> lit {mi.litStart};
                     size_t last = std::min(mi.seg, mi.litTo + 1);
                     for (size_t i = mi.litFrom; i < last; ++i) lit.push_back(mi.pts[i]);
                     if (mi.seg <= mi.litTo) lit.push_back(base);
@@ -1318,56 +1360,86 @@ namespace nt::ui {
             else loser->setSword(true, -dir);
         }
         float delay = std::min(m_resultDelay, 3.f);
-        m_resultDelay += .6f;
+        m_resultDelay += .7f;
         auto text = why == "complete" ? std::string("100%!") : reasonText(why);
         auto c = this->matchCentre(r, s);
+        // the winner cuts straight through and stops on the far side
+        auto past = seatL + ccp(dir * 22.f * sc, 0.f);
 
         this->runAction(CCSequence::create(
             CCDelayTime::create(delay),
-            // the loser braces; the winner draws all the way back
+            // the loser raises a guard; the winner draws all the way back
             CallFuncExt::create([winner, loser, dir, sc] {
-                winner->swordTo(-105.f, .26f);
+                winner->handTo({-15.f, 17.f}, .26f);
+                winner->swordTo(-75.f, .26f);
+                winner->leanTo(-12.f, .26f);
                 winner->runAction(CCEaseOut::create(CCMoveBy::create(.26f, {-dir * 6.f * sc, 0.f}), 2.f));
-                if (loser) loser->swordTo(46.f, .2f);
-            }),
-            CCDelayTime::create(.34f),
-            // dash in and strike
-            CallFuncExt::create([winner, seatL, dir, sc] {
-                winner->runAction(CCEaseIn::create(CCMoveTo::create(.08f, seatL - ccp(dir * 15.f * sc, 0.f)), 2.f));
-                winner->swordTo(120.f, .08f);
-                fx::play("whoosh", .85f, 1.15f);
-            }),
-            CCDelayTime::create(.08f),
-            // the blow
-            CallFuncExt::create([this, winner, loser, dir, sc, reach, c, text] {
-                float k = std::max(.6f, sc);
-                auto hit = loser ? loser->getPosition() + ccp(0.f, 15.f * sc)
-                                 : winner->getPosition() + ccp(dir * 20.f * sc, 15.f * sc);
-                slashFx(this, winner->handWorld(), dir, 28.f, reach * 1.5f, col::gold, .55f, 40);
-                slashFx(this, winner->handWorld(), dir, 28.f, reach * 1.25f, col::white, 1.f, 41);
                 if (loser) {
+                    loser->swordTo(46.f, .2f);
+                    loser->leanTo(-4.f, .2f);
+                }
+            }),
+            CCDelayTime::create(.38f),
+            // one dash, straight through them
+            CallFuncExt::create([this, winner, loser, past, dir, sc, reach] {
+                this->trail(winner.data(), col::white, .3f);
+                winner->runAction(CCEaseOut::create(CCMoveTo::create(.09f, past), 3.f));
+                winner->handTo({2.f, 0.f}, .07f);
+                winner->swordTo(138.f, .08f);
+                winner->leanTo(14.f, .07f);
+                fx::play("whoosh", .9f, 1.25f);
+                fx::play("slice", .9f);
+                if (loser) {
+                    auto body = loser->getPosition() + ccp(0.f, 15.f * sc);
+                    slashFx(this, body - ccp(dir * reach * .7f, 4.f * sc), dir, 38.f, reach * 1.35f, col::white, 1.f, 41);
+                    slashFx(this, body - ccp(dir * reach * .7f, 4.f * sc), dir, 38.f, reach * 1.6f, col::gold, .5f, 40);
+                    // the cut itself: a bright line across them where the blade went through
+                    auto* cut = fx("spark");
+                    cut->setBlendFunc({GL_SRC_ALPHA, GL_ONE});
+                    float len = 64.f * std::max(.6f, sc);
+                    float sx = len / cut->getContentSize().width;
+                    cut->setScaleX(sx);
+                    cut->setScaleY(.6f);
+                    cut->setRotation(dir * 24.f);
+                    cut->setFlipX(dir < 0);
+                    cut->setPosition(body);
+                    this->addChild(cut, 42);
+                    cut->runAction(CCSequence::create(
+                        CCDelayTime::create(.3f),
+                        CCSpawn::create(CCFadeOut::create(.18f), CCScaleTo::create(.18f, sx * 1.4f, 0.f), nullptr),
+                        CCRemoveSelf::create(), nullptr));
+                }
+            }),
+            // the beat after the cut: nobody moves
+            CCDelayTime::create(.36f),
+            CallFuncExt::create([this, winner, loser, dir, sc, c, text] {
+                float k = std::max(.6f, sc);
+                if (loser) {
+                    auto body = loser->getPosition() + ccp(0.f, 15.f * sc);
                     loser->knockOut();
                     loser->setZOrder(9);
-                    loser->runAction(CCJumpBy::create(.36f, {dir * kKnockBack * sc, 0.f}, 9.f * sc + 4.f, 1));
+                    // they crumple back the way the blade came from
+                    loser->runAction(CCJumpBy::create(.36f, {-dir * kKnockBack * sc, 0.f}, 9.f * sc + 4.f, 1));
+                    fx::sparks(this, body, 14, col::goldLight, 34.f * k, 42);
+                    fx::flash(this, body, 38.f * k, col::white, .9f, 41);
                 }
-                fx::play("slice", .9f);
                 fx::play("hit");
                 FMODAudioEngine::sharedEngine()->playEffect("explode_11.ogg");
                 fx::shake(this, 5.f, .3f);
-                fx::sparks(this, hit, 14, col::goldLight, 34.f * k, 42);
-                fx::flash(this, hit, 38.f * k, col::white, .9f, 41);
                 if (!text.empty()) fx::floatText(this, c + ccp(0.f, 30.f * sc + 22.f), text, col::gold, .45f);
+                winner->leanTo(0.f, .3f);
             }),
-            // hold the follow-through for a beat so the hit reads
-            CCDelayTime::create(.36f),
-            CallFuncExt::create([this, winner, seatW, sc] {
-                winner->runAction(CCEaseOut::create(CCMoveTo::create(.22f, seatW), 2.f));
+            CCDelayTime::create(.32f),
+            // turn round to the one they beat and hold the sword up
+            CallFuncExt::create([this, winner, dir, sc] {
+                winner->setFacing(-dir);
+                winner->setHandOffset({0.f, 0.f});
                 winner->swordRaise();
                 winner->celebrate();
                 fx::stars(this, winner->getPosition() + ccp(0.f, 26.f * sc), 6, col::gold, 26.f, 40);
                 fx::play("win");
             }),
-            CCDelayTime::create(1.f),
+            CCDelayTime::create(1.1f),
             CallFuncExt::create([this, r, s, winner, loser, winnerWhich, isFinal] {
                 if (loser) loser->busy = false;
                 if (isFinal) {
@@ -1379,7 +1451,7 @@ namespace nt::ui {
                 this->march(winner.data(), r, s, winnerWhich, [this, winner, s] {
                     int nextWhich = s % 2 == 0 ? 1 : 2;
                     winner->setFacing(nextWhich == 1 ? 1 : -1);
-                    winner->swordTo(kRest, .2f);
+                    winner->swordRest(.2f);
                     winner->squash(.8f);
                     fx::dust(this, winner->getPosition(), .6f, winner->getZOrder() - 1);
                     fx::play("land", .8f);

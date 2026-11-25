@@ -370,6 +370,8 @@ namespace nt::ui {
             if (m_hand) m_hand->removeFromParent();
             m_hand = nullptr;
             m_sword = nullptr;
+            m_handOffset = CCPoint(0.f, 0.f);
+            this->setLean(0.f);
             return;
         }
         if (!m_hand) {
@@ -380,9 +382,45 @@ namespace nt::ui {
             m_sword->setScale(.62f * m_scale);
             m_hand->addChild(m_sword);
         }
-        m_hand->setPosition({m_facing * 12.5f * m_scale, 12.f * m_scale});
+        m_handOffset = CCPoint(0.f, 0.f);
+        m_hand->stopAllActions();
+        m_hand->setPosition(this->handSpot());
         m_sword->setFlipX(m_facing < 0);
         this->setSwordAngle(kSwordRest);
+    }
+
+    CCPoint Avatar::handSpot() const {
+        return {m_facing * (12.5f + m_handOffset.x) * m_scale, (12.f + m_handOffset.y) * m_scale};
+    }
+
+    void Avatar::setHandOffset(CCPoint offset) {
+        m_handOffset = offset;
+        if (!m_hand) return;
+        m_hand->stopActionByTag(0x4A2D);
+        m_hand->setPosition(this->handSpot());
+    }
+
+    void Avatar::handTo(CCPoint offset, float time) {
+        m_handOffset = offset;
+        if (!m_hand) return;
+        m_hand->stopActionByTag(0x4A2D);
+        auto* act = CCEaseSineInOut::create(CCMoveTo::create(time, this->handSpot()));
+        act->setTag(0x4A2D);
+        m_hand->runAction(act);
+    }
+
+    void Avatar::setLean(float deg) {
+        m_lean = deg;
+        m_body->stopActionByTag(0x1EA2);
+        m_body->setRotation(deg * m_facing);
+    }
+
+    void Avatar::leanTo(float deg, float time) {
+        m_lean = deg;
+        m_body->stopActionByTag(0x1EA2);
+        auto* act = CCEaseSineInOut::create(CCRotateTo::create(time, deg * m_facing));
+        act->setTag(0x1EA2);
+        m_body->runAction(act);
     }
 
     void Avatar::swordDraw(int facing, float delay) {
@@ -421,9 +459,11 @@ namespace nt::ui {
         }
         if (f == m_facing) return;  // (keeps any swing in progress)
         float angle = m_sword->getRotation() * m_facing;
-        m_facing = facing >= 0 ? 1 : -1;
-        m_hand->setPosition({m_facing * 12.5f * m_scale, 12.f * m_scale});
+        m_facing = f;
+        m_hand->stopActionByTag(0x4A2D);
+        m_hand->setPosition(this->handSpot());
         m_sword->setFlipX(m_facing < 0);
+        m_body->setRotation(m_lean * m_facing);
         this->setSwordAngle(angle);
     }
 
@@ -442,12 +482,13 @@ namespace nt::ui {
     }
 
     CCPoint Avatar::handWorld() {
-        if (!m_hand) return this->getPosition() + ccp(m_facing * 12.5f * m_scale, 12.f * m_scale) * this->getScale();
-        return this->getPosition() + (m_hand->getPosition() + m_bob->getPosition() + m_body->getPosition()) * this->getScale();
+        if (!m_hand || !this->getParent()) return this->getPosition() + this->handSpot() * this->getScale();
+        // through the real transforms, so body lean and squash are taken into account
+        return this->getParent()->convertToNodeSpace(m_hand->convertToWorldSpace({0.f, 0.f}));
     }
 
     CCPoint Avatar::swordTipWorld() {
-        float rad = (m_sword ? m_sword->getRotation() : 0.f) * 3.14159265f / 180.f;
+        float rad = ((m_sword ? m_sword->getRotation() : 0.f) + m_body->getRotation()) * 3.14159265f / 180.f;
         float len = 52.f * .79f * .62f * m_scale * this->getScale();
         return this->handWorld() + ccp(std::sin(rad), std::cos(rad)) * len;
     }
@@ -461,7 +502,7 @@ namespace nt::ui {
         auto* loose = fx("sword");
         loose->setAnchorPoint({.5f, .21f});
         loose->setScale(m_sword->getScale() * this->getScale());
-        loose->setRotation(m_sword->getRotation());
+        loose->setRotation(m_sword->getRotation() + m_body->getRotation());
         loose->setFlipX(m_facing < 0);
         loose->setPosition(this->handWorld());
         parent->addChild(loose, this->getZOrder() + 1);
@@ -475,10 +516,21 @@ namespace nt::ui {
 
     void Avatar::swordRaise() {
         if (!m_sword) return;
-        this->swordTo(-6.f, .22f);
-        this->runAction(CCSequence::create(CCDelayTime::create(.22f), CallFuncExt::create([this] {
+        // held up high over the head
+        this->handTo({-7.f, 17.f}, .2f);
+        this->swordTo(-4.f, .22f);
+        this->leanTo(-4.f, .2f);
+        this->runAction(CCSequence::create(CCDelayTime::create(.24f), CallFuncExt::create([this] {
             fx::stars(this->getParent(), this->swordTipWorld(), 4, col::goldLight, 14.f, this->getZOrder() + 2);
+            this->leanTo(0.f, .4f);
         }), nullptr));
+    }
+
+    void Avatar::swordRest(float time) {
+        if (!m_sword) return;
+        this->handTo({0.f, 0.f}, time);
+        this->swordTo(kSwordRest, time);
+        this->leanTo(0.f, time);
     }
 
     void Avatar::knockOut() {

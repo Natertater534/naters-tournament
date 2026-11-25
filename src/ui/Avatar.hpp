@@ -64,8 +64,17 @@ namespace nt::ui {
         void setFacing(int facing);
         void setSwordAngle(float deg);
         void swordTo(float deg, float time);
+        // where the sword hand is, relative to where it rests at the front of the cube
+        // (icon units; x is forward). Raised behind the head for big swings.
+        void setHandOffset(CCPoint offset);
+        void handTo(CCPoint offset, float time);
+        // tilt the whole body around the feet: positive leans forward, negative back
+        void setLean(float deg);
+        void leanTo(float deg, float time);
         void swordDrop();
         void swordRaise();
+        // back to the resting grip: hand down, blade tilted forward, standing straight
+        void swordRest(float time);
         CCPoint handWorld();
         CCPoint swordTipWorld();
 
@@ -89,6 +98,9 @@ namespace nt::ui {
         CCSprite* m_mark = nullptr;
         CCNode* m_hand = nullptr;
         CCSprite* m_sword = nullptr;
+        CCPoint m_handOffset {0.f, 0.f};
+        float m_lean = 0.f;
+        CCPoint handSpot() const;
         int m_facing = 1;
         bool m_dimmed = false;
         bool m_idle = false;

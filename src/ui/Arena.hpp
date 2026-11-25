@@ -85,6 +85,7 @@ namespace nt::ui {
         Avatar* avatarFor(Player const& p, float scale);
         void trail(Avatar* a, ccColor3B color, float life);
         void march(Avatar* a, int round, int slot, int which, std::function<void()> done);
+        bool inTheWay(Avatar* self, float x0, float x1, float y) const;
         void updateMarches(float dt);
 
         CCSize m_size;
@@ -120,7 +121,8 @@ namespace nt::ui {
             geode::WeakRef<Avatar> avatar;
             std::vector<CCPoint> pts;   // pts[0] is where it starts
             std::vector<float> hops;    // hop height on the way to pts[i]
-            size_t litFrom = 0, litTo = 0;  // the part of pts that is the bracket line
+            CCPoint litStart;               // where the bracket line starts
+            size_t litFrom = 0, litTo = 0;  // the rest of the line, as indexes into pts
             size_t seg = 1;
             float segPos = 0.f;
             std::pair<int, int> key;

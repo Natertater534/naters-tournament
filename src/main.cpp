@@ -56,7 +56,7 @@ namespace {
                 minY = std::min(minY, box.getMinY());
                 maxY = std::max(maxY, box.getMaxY());
             }
-            if (minX >= kBadgeW + 8.f && maxY > minY) spot = {minX / 2.f, (minY + maxY) / 2.f};
+            if (minX >= kBadgeW + 8.f && maxY > minY) spot = CCPoint(minX / 2.f, (minY + maxY) / 2.f);
         }
         for (float dy : {0.f, 56.f, -56.f, 112.f}) {
             CCPoint p {spot.x, spot.y + dy};
