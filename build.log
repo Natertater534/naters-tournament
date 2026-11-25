@@ -1,0 +1,23 @@
+[0/2] Re-checking globbed directories...
+[1/12] Building CXX object CMakeFiles/NatersTournament.dir/src/main.cpp.o
+FAILED: [code=1] CMakeFiles/NatersTournament.dir/src/main.cpp.o 
+/usr/local/bin/sccache /usr/local/lib/android/sdk/ndk/29.0.14206865/toolchains/llvm/prebuilt/linux-x86_64/bin/clang++ --target=armv7-none-linux-androideabi23 --sysroot=/usr/local/lib/android/sdk/ndk/29.0.14206865/toolchains/llvm/prebuilt/linux-x86_64/sysroot -DARC_FEATURE_TIME=1 -DGEODE_COMP_GD_VERSION=22091 -DGEODE_GD_VERSION=2.2091 -DGEODE_GD_VERSION_STRING=\"2.2091\" -DGEODE_MOD_ID=\"nater.tournament\" -DMAT_JSON_DYNAMIC=1 -DNatersTournament_EXPORTS -DPROJECT_NAME=NatersTournament -I/home/runner/work/naters-tournament/naters-tournament/src -I/home/runner/work/naters-tournament/naters-tournament/geode-sdk-clone/loader/include -I/home/runner/work/naters-tournament/naters-tournament/geode-sdk-clone/loader/include/Geode/cocos/include -I/home/runner/work/naters-tournament/naters-tournament/geode-sdk-clone/loader/include/Geode/cocos/extensions -I/home/runner/work/naters-tournament/naters-tournament/geode-sdk-clone/loader/include/Geode/fmod -isystem /home/runner/work/naters-tournament/naters-tournament/build/bindings/bindings -isystem /home/runner/work/naters-tournament/naters-tournament/build/_deps/bindings-src/bindings/include -isystem /home/runner/work/naters-tournament/naters-tournament/cpm-cache/fmt/73a7/include -isystem /home/runner/work/naters-tournament/naters-tournament/cpm-cache/tuliphook/c46b/include -isystem /home/runner/work/naters-tournament/naters-tournament/cpm-cache/result/9983/include -isystem /home/runner/work/naters-tournament/naters-tournament/cpm-cache/json/f358/include -isystem /home/runner/work/naters-tournament/naters-tournament/cpm-cache/nontype_functional/aaa0/include -isystem /home/runner/work/naters-tournament/naters-tournament/cpm-cache/asp2/9972/include -isystem /home/runner/work/naters-tournament/naters-tournament/cpm-cache/arc/e5fc/include -g -DANDROID -fdata-sections -ffunction-sections -funwind-tables -fstack-protector-strong -no-canonical-prefixes -D_FORTIFY_SOURCE=2 -march=armv7-a -mthumb -Wformat -Werror=format-security   -O3 -DNDEBUG  -std=gnu++23 -flto=thin -fPIC -fvisibility=hidden -Werror=return-type -ffunction-sections -fdata-sections -fdeclspec -Winvalid-pch -Xclang -include-pch -Xclang /home/runner/work/naters-tournament/naters-tournament/build/CMakeFiles/NatersTournament.dir/cmake_pch.hxx.pch -Xclang -include -Xclang /home/runner/work/naters-tournament/naters-tournament/build/CMakeFiles/NatersTournament.dir/cmake_pch.hxx -MD -MT CMakeFiles/NatersTournament.dir/src/main.cpp.o -MF CMakeFiles/NatersTournament.dir/src/main.cpp.o.d -o CMakeFiles/NatersTournament.dir/src/main.cpp.o -c /home/runner/work/naters-tournament/naters-tournament/src/main.cpp
+/home/runner/work/naters-tournament/naters-tournament/src/main.cpp:59:60: error: use of overloaded operator '=' is ambiguous (with operand types 'CCPoint' and 'void')
+   59 |             if (minX >= kBadgeW + 8.f && maxY > minY) spot = {minX / 2.f, (minY + maxY) / 2.f};
+      |                                                       ~~~~ ^ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+/home/runner/work/naters-tournament/naters-tournament/geode-sdk-clone/loader/include/Geode/cocos/include/../actions/../cocoa/CCGeometry.h:71:31: note: candidate function
+   71 |     inline constexpr CCPoint& operator= (const CCPoint& other) {
+      |                               ^
+/home/runner/work/naters-tournament/naters-tournament/geode-sdk-clone/loader/include/Geode/cocos/include/../actions/../cocoa/CCGeometry.h:416:29: note: candidate function
+  416 | constexpr CCPoint& CCPoint::operator= (const CCSize& size) {
+      |                             ^
+1 error generated.
+[2/12] Building CXX object CMakeFiles/NatersTournament.dir/src/ui/LevelReveal.cpp.o
+[3/12] Building CXX object CMakeFiles/NatersTournament.dir/src/ui/Theme.cpp.o
+[4/12] Building CXX object CMakeFiles/NatersTournament.dir/src/ui/HubLayer.cpp.o
+[5/12] Linking CXX static library bindings/libGeodeBindings.a
+[6/12] Building CXX object CMakeFiles/NatersTournament.dir/src/ui/Modals.cpp.o
+[7/12] Building CXX object CMakeFiles/NatersTournament.dir/src/ui/VsLayer.cpp.o
+[8/12] Building CXX object CMakeFiles/NatersTournament.dir/geode-sdk-clone/entry.cpp.o
+[9/12] Building CXX object CMakeFiles/NatersTournament.dir/src/ui/TournamentLayer.cpp.o
+ninja: build stopped: cannot make progress due to previous errors.
