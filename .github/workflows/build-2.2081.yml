@@ -1,0 +1,31 @@
+# For players who haven't updated to 2.2091 yet: Geode v5.11.2 on GD 2.2081.
+# Bindings are pinned to the last 2.2081-only commit (just before 2.209 work began
+# on Oct 16, 2026), and Codegen is built from that commit so its output matches
+# Geode v5. Archives stay deflate so older loaders still open them.
+name: GD 2.2081 (Geode v5)
+
+on:
+  push:
+    branches: [main]
+    paths-ignore: ["**.md"]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  actions: write
+
+concurrency:
+  group: gd2.2081-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    uses: ./.github/workflows/build-common.yml
+    with:
+      geode: "5.11.2"
+      gd: "2.2081"
+      label: "2.2081"
+      bindings-ref: "1605f500d053f8de122bf5c7dc6d17c24866e02e"
+      configure-args: "-DSKIP_BUILDING_CODEGEN=OFF"
+      zstd: false

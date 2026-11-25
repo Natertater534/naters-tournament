@@ -1,0 +1,18 @@
+{
+  "geode": "6.0.0",
+  "gd": {
+    "win": "2.2091",
+    "android": "2.2091"
+  },
+  "id": "nater.tournament",
+  "name": "Nater's Tournament",
+  "version": "v0.1.0",
+  "developer": "Nater",
+  "description": "Live 1v1 Geometry Dash tournaments: join, clash on the bracket map and race your opponent on the same level.",
+  "tags": ["online", "gameplay", "interface"],
+  "resources": {
+    "files": [
+      "resources/emotes/*.png"
+    ]
+  }
+}
