@@ -47,6 +47,17 @@ namespace nt::ui {
                 CCRemoveSelf::create(), nullptr));
         }
 
+        // a flat oval on the ground marking a spot where a player stands
+        void drawPad(CCDrawNode* dn, CCPoint c, float w, float h, ccColor4F fill, ccColor4F rim) {
+            constexpr int n = 20;
+            CCPoint pts[n];
+            for (int i = 0; i < n; ++i) {
+                float a = 2.f * kPi * static_cast<float>(i) / n;
+                pts[i] = CCPoint(c.x + std::cos(a) * w / 2.f, c.y + std::sin(a) * h / 2.f);
+            }
+            dn->drawPolygon(pts, n, fill, 1.f, rim);
+        }
+
         // where two blades cross (or the point between their tips when they miss)
         CCPoint crossing(CCPoint p1, CCPoint p2, CCPoint q1, CCPoint q2) {
             auto r = p2 - p1, s = q2 - q1;
@@ -679,11 +690,15 @@ namespace nt::ui {
         return {c.x + (which == 1 ? -d : d), c.y - 15.f * this->bracketScale()};
     }
 
+    float Arena::padWidth() const {
+        return 30.f * this->bracketScale() + 10.f;
+    }
+
     std::vector<CCPoint> Arena::linePath(int round, int slot) const {
         if (round >= m_rounds) return {};
         float sc = this->bracketScale();
         float d = this->halfGap();
-        float body = 15.f * sc + 3.f;
+        float body = this->padWidth() / 2.f;
         int side = this->sideOf(round, slot);
         auto c = this->matchCentre(round, slot);
         auto n = this->matchCentre(round + 1, slot / 2);
@@ -764,26 +779,32 @@ namespace nt::ui {
     void Arena::drawLines(State const& state) {
         m_lines->clear();
         float sc = this->bracketScale();
-        float d = this->halfGap();
-        float body = 15.f * sc + 3.f;
+        float pw = this->padWidth(), ph = 7.f * sc + 3.f;
+        // the paths first, as little roads: a dark bed with a line along it
         for (auto const& m : state.matches) {
-            // the ground the pair stands on (a faint line, part of the path)
-            auto c = this->matchCentre(m.round, m.slot);
-            float fy = c.y - 15.f * sc;
-            m_lines->drawSegment({c.x - d - body, fy}, {c.x + d + body, fy}, 1.f, c4f(col::blue, .2f));
-
             auto path = this->linePath(m.round, m.slot);
             if (path.size() < 2) continue;
             auto key = std::make_pair(m.round, m.slot);
             bool lit = m.done() && m.winner && !m_marching.contains(key);
-            if (lit) {
-                for (size_t i = 1; i < path.size(); ++i) {
-                    m_lines->drawSegment(path[i - 1], path[i], 3.6f, c4f(col::gold, .13f));
-                }
-            }
-            auto color = lit ? c4f(col::gold, .9f) : c4f(col::blue, .3f);
             for (size_t i = 1; i < path.size(); ++i) {
-                m_lines->drawSegment(path[i - 1], path[i], lit ? 1.5f : 1.f, color);
+                m_lines->drawSegment(path[i - 1], path[i], lit ? 3.4f : 2.6f,
+                                     lit ? c4f(col::gold, .16f) : c4f(col::navyDeep, .6f));
+            }
+            for (size_t i = 1; i < path.size(); ++i) {
+                m_lines->drawSegment(path[i - 1], path[i], lit ? 1.5f : .9f,
+                                     lit ? c4f(col::gold, .95f) : c4f(col::blue, .34f));
+            }
+        }
+        // a spot on the ground for every fighter, filled or still to be decided
+        for (auto const& m : state.matches) {
+            for (int which : {1, 2}) {
+                int acc = which == 1 ? m.p1 : m.p2;
+                bool won = m.done() && acc && m.winner == acc;
+                bool lost = m.done() && acc && m.winner && m.winner != acc;
+                auto at = this->seatPos(m.round, m.slot, which);
+                auto rim = won ? c4f(col::gold, .9f) : lost ? c4f(col::dim, .22f) : c4f(col::blue, acc ? .5f : .3f);
+                auto fill = won ? c4f(col::gold, .14f) : c4f(col::navyDeep, acc ? .7f : .45f);
+                drawPad(m_lines, at, pw, ph, fill, rim);
             }
         }
     }
@@ -1533,10 +1554,11 @@ namespace nt::ui {
         if (!m_bracket) return false;
         float sc = this->bracketScale();
         float d = this->halfGap();
+        float half = d + this->padWidth() / 2.f + 2.f;
         for (auto const& key : m_matchKeys) {
             auto c = this->matchCentre(key.first, key.second);
             float fy = c.y - 15.f * sc;
-            CCRect box {c.x - d - 15.f * sc - 6.f, fy - 8.f, 2.f * (d + 15.f * sc + 6.f), 30.f * sc + 20.f};
+            CCRect box {c.x - half, fy - 8.f, 2.f * half, 30.f * sc + 20.f};
             if (box.containsPoint(p)) {
                 round = key.first;
                 slot = key.second;

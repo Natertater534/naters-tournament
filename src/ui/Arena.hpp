@@ -80,6 +80,7 @@ namespace nt::ui {
         float bracketScale() const;
         float halfGap() const;
         float reach() const;
+        float padWidth() const;
         void startDuel(int round, int slot, Avatar* a, Avatar* b);
         void stopDuel(int round, int slot);
         Avatar* avatarFor(Player const& p, float scale);
