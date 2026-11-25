@@ -103,6 +103,7 @@ namespace nt::ui {
         std::set<std::pair<int, int>> m_doneShown;  // results already animated
         std::set<std::pair<int, int>> m_marching;   // lines a winner is walking right now
         std::set<std::pair<int, int>> m_matchKeys;
+        std::map<int, float> m_knockX;  // how far (x) each beaten player was thrown from their spot
         CCNode* m_lobbyDeco = nullptr;
         CCNode* m_bracketRoot = nullptr;
         CCDrawNode* m_lines = nullptr;

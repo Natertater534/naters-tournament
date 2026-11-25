@@ -861,7 +861,10 @@ namespace nt::ui {
             a->stopActionByTag(kMoveTag);
             if (champ && m_trophy) seat = m_trophy->getPosition() + ccp(0.f, 18.f);
             // the beaten lie where the final blow knocked them
-            if (out && deepest->done() && deepest->why != "bye") seat.x += (which == 1 ? 1.f : -1.f) * kKnockBack * sc;
+            if (out && deepest->done() && deepest->why != "bye") {
+                auto kit = m_knockX.find(p.account);
+                seat.x += kit != m_knockX.end() ? kit->second : (which == 1 ? 1.f : -1.f) * kKnockBack * sc;
+            }
             a->setZOrder(out ? 9 : 10);
             if (animate && ccpDistance(a->getPosition(), seat) > 1.f) {
                 auto* move = CCEaseInOut::create(CCMoveTo::create(.45f, seat), 2.f);
@@ -1384,13 +1387,46 @@ namespace nt::ui {
         m_resultDelay += .7f;
         auto text = why == "complete" ? std::string("100%!") : reasonText(why);
         auto c = this->matchCentre(r, s);
-        // the winner cuts straight through and stops on the far side
-        auto past = seatL + ccp(dir * 22.f * sc, 0.f);
+        int side = this->sideOf(r, s);
+        // the winner standing nearer the middle of the map has their path beyond the loser:
+        // they cut straight through and keep going. The other one leaps in with an overhead
+        // slam and lands back on their spot, where their path starts.
+        bool inner = (side < 0 && winnerWhich == 1) || (side > 0 && winnerWhich == 2);
+        bool dashThrough = isFinal || inner;
+        float knock = (dashThrough ? -dir : dir) * kKnockBack * sc;
+        if (loser) m_knockX[l] = knock;
 
-        this->runAction(CCSequence::create(
-            CCDelayTime::create(delay),
+        auto blow = [this, loser, sc, reach, c, text, knock](CCPoint hand, int dir, float mid) {
+            float k = std::max(.6f, sc);
+            if (loser) {
+                auto body = loser->getPosition() + ccp(0.f, 15.f * sc);
+                slashFx(this, hand, dir, mid, reach * 1.35f, col::white, 1.f, 41);
+                slashFx(this, hand, dir, mid, reach * 1.6f, col::gold, .5f, 40);
+                loser->knockOut();
+                loser->setZOrder(9);
+                loser->runAction(CCJumpBy::create(.36f, {knock, 0.f}, 9.f * sc + 4.f, 1));
+                fx::sparks(this, body, 14, col::goldLight, 34.f * k, 42);
+                fx::flash(this, body, 38.f * k, col::white, .9f, 41);
+            }
+            fx::play("hit");
+            FMODAudioEngine::sharedEngine()->playEffect("explode_11.ogg");
+            fx::shake(this, 5.f, .3f);
+            if (!text.empty()) fx::floatText(this, c + ccp(0.f, 30.f * sc + 22.f), text, col::gold, .45f);
+        };
+
+        CCArray* steps = CCArray::create();
+        steps->addObject(CCDelayTime::create(delay));
+        if (dashThrough) {
+            // far enough to clear them, but not past the bend in their path or off the screen
+            float far = 30.f * sc + 12.f;
+            if (!isFinal) {
+                auto line = this->linePath(r, s);
+                if (line.size() > 1) far = std::min(far, std::abs(line[1].x - seatL.x));
+            }
+            auto past = seatL + ccp(dir * far, 0.f);
+            past.x = std::clamp(past.x, 4.f + 15.f * sc, m_size.width - 4.f - 15.f * sc);
             // the loser raises a guard; the winner draws all the way back
-            CallFuncExt::create([winner, loser, dir, sc] {
+            steps->addObject(CallFuncExt::create([winner, loser, dir, sc] {
                 winner->handTo({-15.f, 17.f}, .26f);
                 winner->swordTo(-75.f, .26f);
                 winner->leanTo(-12.f, .26f);
@@ -1399,10 +1435,10 @@ namespace nt::ui {
                     loser->swordTo(46.f, .2f);
                     loser->leanTo(-4.f, .2f);
                 }
-            }),
-            CCDelayTime::create(.38f),
+            }));
+            steps->addObject(CCDelayTime::create(.38f));
             // one dash, straight through them
-            CallFuncExt::create([this, winner, loser, past, dir, sc, reach] {
+            steps->addObject(CallFuncExt::create([this, winner, loser, past, dir, sc, reach] {
                 this->trail(winner.data(), col::white, .3f);
                 winner->runAction(CCEaseOut::create(CCMoveTo::create(.09f, past), 3.f));
                 winner->handTo({2.f, 0.f}, .07f);
@@ -1413,7 +1449,6 @@ namespace nt::ui {
                 if (loser) {
                     auto body = loser->getPosition() + ccp(0.f, 15.f * sc);
                     slashFx(this, body - ccp(dir * reach * .7f, 4.f * sc), dir, 38.f, reach * 1.35f, col::white, 1.f, 41);
-                    slashFx(this, body - ccp(dir * reach * .7f, 4.f * sc), dir, 38.f, reach * 1.6f, col::gold, .5f, 40);
                     // the cut itself: a bright line across them where the blade went through
                     auto* cut = fx("spark");
                     cut->setBlendFunc({GL_SRC_ALPHA, GL_ONE});
@@ -1430,17 +1465,16 @@ namespace nt::ui {
                         CCSpawn::create(CCFadeOut::create(.18f), CCScaleTo::create(.18f, sx * 1.4f, 0.f), nullptr),
                         CCRemoveSelf::create(), nullptr));
                 }
-            }),
-            // the beat after the cut: nobody moves
-            CCDelayTime::create(.36f),
-            CallFuncExt::create([this, winner, loser, dir, sc, c, text] {
+            }));
+            // the beat after the cut: nobody moves. Then they burst.
+            steps->addObject(CCDelayTime::create(.36f));
+            steps->addObject(CallFuncExt::create([this, winner, loser, sc, knock, c, text] {
                 float k = std::max(.6f, sc);
                 if (loser) {
                     auto body = loser->getPosition() + ccp(0.f, 15.f * sc);
                     loser->knockOut();
                     loser->setZOrder(9);
-                    // they crumple back the way the blade came from
-                    loser->runAction(CCJumpBy::create(.36f, {-dir * kKnockBack * sc, 0.f}, 9.f * sc + 4.f, 1));
+                    loser->runAction(CCJumpBy::create(.36f, {knock, 0.f}, 9.f * sc + 4.f, 1));
                     fx::sparks(this, body, 14, col::goldLight, 34.f * k, 42);
                     fx::flash(this, body, 38.f * k, col::white, .9f, 41);
                 }
@@ -1449,41 +1483,92 @@ namespace nt::ui {
                 fx::shake(this, 5.f, .3f);
                 if (!text.empty()) fx::floatText(this, c + ccp(0.f, 30.f * sc + 22.f), text, col::gold, .45f);
                 winner->leanTo(0.f, .3f);
-            }),
-            CCDelayTime::create(.32f),
+            }));
+            steps->addObject(CCDelayTime::create(.32f));
             // turn round to the one they beat and hold the sword up
-            CallFuncExt::create([this, winner, dir, sc] {
+            steps->addObject(CallFuncExt::create([this, winner, dir, sc] {
                 winner->setFacing(-dir);
                 winner->setHandOffset({0.f, 0.f});
                 winner->swordRaise();
                 winner->celebrate();
                 fx::stars(this, winner->getPosition() + ccp(0.f, 26.f * sc), 6, col::gold, 26.f, 40);
                 fx::play("win");
-            }),
-            CCDelayTime::create(1.1f),
-            CallFuncExt::create([this, r, s, winner, loser, winnerWhich, isFinal] {
-                if (loser) loser->busy = false;
-                if (isFinal) {
-                    winner->busy = false;
-                    winner->setIdle(true);
-                    this->drawLines(m_state);
-                    return;
+            }));
+        } else {
+            auto landing = seatL - ccp(dir * (15.f * sc + 4.f), 0.f);
+            // crouch with the sword raised overhead...
+            steps->addObject(CallFuncExt::create([winner, loser] {
+                winner->handTo({-12.f, 17.f}, .22f);
+                winner->swordTo(-80.f, .22f);
+                winner->leanTo(-6.f, .2f);
+                winner->squash(.45f);
+                if (loser) {
+                    loser->swordTo(46.f, .2f);
+                    loser->leanTo(-4.f, .2f);
                 }
-                this->march(winner.data(), r, s, winnerWhich, [this, winner, s] {
-                    int nextWhich = s % 2 == 0 ? 1 : 2;
-                    winner->setFacing(nextWhich == 1 ? 1 : -1);
-                    winner->swordRest(.2f);
-                    winner->squash(.8f);
-                    fx::dust(this, winner->getPosition(), .6f, winner->getZOrder() - 1);
-                    fx::play("land", .8f);
-                    winner->busy = false;
-                    winner->setIdle(true);
-                    this->refreshMatches(m_state);
-                    this->layoutBracket(m_state, true);
-                    this->tickLive(m_state);
-                });
-            }),
-            nullptr));
+            }));
+            steps->addObject(CCDelayTime::create(.26f));
+            // ...leap in...
+            steps->addObject(CallFuncExt::create([this, winner, landing, sc] {
+                winner->runAction(CCJumpTo::create(.34f, landing, 30.f * sc + 12.f, 1));
+                winner->leanTo(8.f, .3f);
+                this->trail(winner.data(), col::white, .4f);
+                fx::play("whoosh", .9f, 1.1f);
+            }));
+            steps->addObject(CCDelayTime::create(.26f));
+            // ...and bring it down on them as they land
+            steps->addObject(CallFuncExt::create([winner] {
+                winner->handTo({2.f, 0.f}, .08f);
+                winner->swordTo(150.f, .08f);
+                winner->leanTo(16.f, .08f);
+                fx::play("slice", .9f);
+            }));
+            steps->addObject(CCDelayTime::create(.08f));
+            steps->addObject(CallFuncExt::create([this, winner, dir, sc, blow] {
+                winner->squash(.8f);
+                fx::dust(this, winner->getPosition(), .9f, winner->getZOrder() - 1);
+                blow(winner->handWorld(), dir, 40.f);
+            }));
+            steps->addObject(CCDelayTime::create(.34f));
+            // hop back onto their own spot and hold the sword up
+            steps->addObject(CallFuncExt::create([winner, seatW, sc] {
+                winner->leanTo(0.f, .25f);
+                winner->runAction(CCJumpTo::create(.3f, seatW, 12.f * sc + 6.f, 1));
+            }));
+            steps->addObject(CCDelayTime::create(.32f));
+            steps->addObject(CallFuncExt::create([this, winner, sc] {
+                winner->squash(.5f);
+                winner->setHandOffset({0.f, 0.f});
+                winner->swordRaise();
+                winner->celebrate();
+                fx::stars(this, winner->getPosition() + ccp(0.f, 26.f * sc), 6, col::gold, 26.f, 40);
+                fx::play("win");
+            }));
+        }
+        steps->addObject(CCDelayTime::create(1.1f));
+        steps->addObject(CallFuncExt::create([this, r, s, winner, loser, winnerWhich, isFinal] {
+            if (loser) loser->busy = false;
+            if (isFinal) {
+                winner->busy = false;
+                winner->setIdle(true);
+                this->drawLines(m_state);
+                return;
+            }
+            this->march(winner.data(), r, s, winnerWhich, [this, winner, s] {
+                int nextWhich = s % 2 == 0 ? 1 : 2;
+                winner->setFacing(nextWhich == 1 ? 1 : -1);
+                winner->swordRest(.2f);
+                winner->squash(.8f);
+                fx::dust(this, winner->getPosition(), .6f, winner->getZOrder() - 1);
+                fx::play("land", .8f);
+                winner->busy = false;
+                winner->setIdle(true);
+                this->refreshMatches(m_state);
+                this->layoutBracket(m_state, true);
+                this->tickLive(m_state);
+            });
+        }));
+        this->runAction(CCSequence::create(steps));
     }
 
     void Arena::onChampion(State const& state, int account) {
