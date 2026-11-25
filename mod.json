@@ -12,7 +12,9 @@
   "tags": ["online", "gameplay", "interface"],
   "resources": {
     "files": [
-      "resources/emotes/*.png"
+      "resources/emotes/*.png",
+      "resources/fx/*.png",
+      "resources/sfx/*.ogg"
     ]
   }
 }
