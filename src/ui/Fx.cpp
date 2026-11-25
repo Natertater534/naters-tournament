@@ -1,6 +1,7 @@
 #include "Fx.hpp"
 #include "../core/Compat.hpp"
 
+#include <chrono>
 #include <cmath>
 #include <random>
 #include <unordered_map>
@@ -24,12 +25,23 @@ namespace nt::fx {
         return std::uniform_int_distribution<int>(lo, hi)(rng());
     }
 
-    void play(char const* name) {
+    void play(char const* name, float volume, float speed) {
         auto* engine = FMODAudioEngine::sharedEngine();
         if (!engine) return;
         auto rel = Mod::get()->expandSpriteName(std::string(name) + ".ogg");
         auto full = compat::str(CCFileUtils::sharedFileUtils()->fullPathForFilename(rel.c_str(), false));
-        engine->playEffect(full);
+        // (path, speed, unused, volume) is the call GD itself makes for its menu sounds
+        engine->playEffect(full, speed, 0.f, volume);
+    }
+
+    bool playLimited(char const* name, float gap, float volume, float speed) {
+        static std::unordered_map<std::string, double> last;
+        double now = std::chrono::duration<double>(std::chrono::steady_clock::now().time_since_epoch()).count();
+        auto& t = last[name];
+        if (t > 0.0 && now - t < gap) return false;
+        t = now;
+        play(name, volume, speed);
+        return true;
     }
 
     // ---------------------------------------------------------------- Particles

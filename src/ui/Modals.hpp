@@ -5,6 +5,7 @@
 
 #include <Geode/Geode.hpp>
 #include <functional>
+#include "../core/Levels.hpp"
 #include "../core/Model.hpp"
 #include "Theme.hpp"
 
@@ -70,6 +71,7 @@ namespace nt::ui {
         int max = 16;
         int time = 180;
         bool play = true;
+        int pool = 96;  // difficulties to roll levels from (bits, see core/Levels.hpp)
     };
 
     class CreateModal : public Modal {
@@ -80,7 +82,9 @@ namespace nt::ui {
         bool init(std::function<void(CreateSettings)> cb);
         void refresh();
         CCMenuItemSpriteExtra* chip(std::string const& text, CCPoint pos, float width, std::function<void()> cb);
+        CCMenuItemSpriteExtra* faceChip(Difficulty const& d, CCPoint pos);
         CreateSettings m_set;
+        CCLabelBMFont* m_poolNote = nullptr;
         CCTextInputNode* m_name = nullptr;
         std::vector<std::pair<CCMenuItemSpriteExtra*, std::function<bool()>>> m_chips;
         std::function<void(CreateSettings)> m_cb;
@@ -105,29 +109,4 @@ namespace nt::ui {
         std::function<void(int)> m_cb;
     };
 
-    class LevelModal : public Modal, public LevelManagerDelegate {
-    public:
-        // host tool: look a level up by ID and pick it for the next round
-        static LevelModal* create(std::function<void(LevelRef)> cb);
-        void onClose(CCObject*) override;
-
-    protected:
-        ~LevelModal() override;
-        bool init(std::function<void(LevelRef)> cb);
-        void search();
-        void showLevel(GJGameLevel* level);
-        void loadLevelsFinished(cocos2d::CCArray* levels, char const* key) override;
-        void loadLevelsFailed(char const* key) override;
-        void loadLevelsFinished(cocos2d::CCArray* levels, char const* key, int type) override;
-        void loadLevelsFailed(char const* key, int type) override;
-
-        CCTextInputNode* m_input = nullptr;
-        CCNode* m_preview = nullptr;
-        CCMenuItemSpriteExtra* m_use = nullptr;
-        LevelRef m_found;
-        bool m_searching = false;
-        std::function<void(LevelRef)> m_cb;
-    };
-
-    int faceFor(GJGameLevel* level);
 }

@@ -89,6 +89,14 @@ namespace nt {
         return best;
     }
 
+    int State::nextRound() const {
+        if (!t.running()) return t.lobby() ? 1 : 0;
+        for (auto const& m : matches) {
+            if (m.round == t.round && m.state == "pending" && (m.p1 || m.p2)) return t.round;
+        }
+        return t.round < t.rounds ? t.round + 1 : 0;
+    }
+
     std::vector<Player const*> State::activePlayers() const {
         std::vector<Player const*> out;
         for (auto const& p : players) {
@@ -115,6 +123,8 @@ namespace nt {
             t.champ = jint(j, "champ");
             t.rev = jlong(j, "rev", -1);
             t.count = jint(j, "count");
+            t.levelRound = jint(j, "levelRound");
+            t.pool = jint(j, "pool", 96);
             t.level = {};
             if (jhas(j, "level")) {
                 auto const& l = j["level"];
@@ -169,6 +179,15 @@ namespace nt {
                 matches.push_back(std::move(m));
             }
             replaced = true;
+        }
+        if (jhas(v, "pos") && v["pos"].isArray()) {
+            auto const& arr = v["pos"];
+            pos.clear();
+            for (size_t i = 0; i < arr.size(); ++i) {
+                auto const& row = arr[i];
+                int acc = static_cast<int>(anum(row, 0));
+                if (acc) pos[acc] = {static_cast<float>(anum(row, 1) / 1000.0), static_cast<int>(anum(row, 2))};
+            }
         }
         if (jhas(v, "live") && v["live"].isArray()) {
             auto const& arr = v["live"];

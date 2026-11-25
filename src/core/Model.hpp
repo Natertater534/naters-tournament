@@ -4,6 +4,7 @@
 #include <matjson.hpp>
 #include <string>
 #include <vector>
+#include <map>
 
 namespace nt {
     // ---- tiny JSON readers (never throw, default on anything odd)
@@ -83,6 +84,8 @@ namespace nt {
         int champ = 0;
         int64_t rev = -1;
         LevelRef level;
+        int levelRound = 0;  // the round the current level was rolled for
+        int pool = 96;       // which difficulties levels are rolled from (see Levels.hpp)
         int count = 0;
 
         bool lobby() const { return state == "lobby"; }
@@ -115,6 +118,10 @@ namespace nt {
         std::vector<Player> players;
         std::vector<Match> matches;
         int64_t evLast = 0;
+        // lobby: where each player stands (0..1 across the stage) and how many times they've jumped
+        std::map<int, std::pair<float, int>> pos;
+        // the round the host should start next (or 0 when there's none left)
+        int nextRound() const;
 
         Player const* player(int account) const;
         Match const* match(int round, int slot) const;

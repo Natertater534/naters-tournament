@@ -133,7 +133,49 @@ def drum():
     sec = .5; n = int(SR * sec)
     return chirp_sine(160, 70, sec) * env(n, .002, .14) + lp(rng.standard_normal(n), 1500) * env(n, .001, .015)
 
+# shing: a sword drawn: a bright scrape rising into a short ring
+def shing():
+    sec = .55; n = int(SR * sec)
+    m = int(SR * .16)
+    noise = rng.standard_normal(m)
+    f, tt, Z = signal.stft(noise, SR, nperseg=512)
+    centre = 2400 + 5200 * np.clip(tt / .16, 0, 1)
+    mask = np.exp(-((f[:, None] - centre[None, :]) / (600 + centre[None, :] * .2)) ** 2)
+    _, y = signal.istft(Z * mask, SR, nperseg=512)
+    y = y[:m]
+    y = y * np.sin(np.pi * np.clip(np.arange(len(y)) / len(y), 0, 1)) ** .8
+    scrape = np.zeros(n); scrape[:len(y)] = y
+    start = int(SR * .11)
+    xr = t(sec - .11)
+    r = np.zeros(len(xr))
+    for fq, a, d in [(2093, 1.0, .32), (3322, .6, .22), (4699, .45, .16), (6271, .3, .1)]:
+        r += a * np.sin(2 * np.pi * fq * xr) * np.exp(-xr / d)
+    ring = np.zeros(n); ring[start:start + len(r)] = r[:n - start] * .45
+    return scrape * 1.5 + ring
+
+# swish: one quick sword swing, shorter and airier than the whoosh
+def swish():
+    sec = .2; n = int(SR * sec)
+    noise = rng.standard_normal(n)
+    f, tt, Z = signal.stft(noise, SR, nperseg=512)
+    centre = 900 + 3800 * np.sin(np.pi * np.clip(tt / sec, 0, 1)) ** 2
+    mask = np.exp(-((f[:, None] - centre[None, :]) / (400 + centre[None, :] * .3)) ** 2)
+    _, y = signal.istft(Z * mask, SR, nperseg=512)
+    y = y[:n]
+    u = np.clip(np.arange(len(y)) / len(y), 0, 1)
+    return y * (u ** 1.4) * np.exp(-np.maximum(0, u - .55) * 7)
+
+# slice: a blade cutting through: a snap, a hiss of steel, a low body and a short ring
+def slice_():
+    sec = .38; n = int(SR * sec); x = t(sec)
+    hiss = hp(rng.standard_normal(n), 2500) * env(n, .001, .06)
+    snap = hp(rng.standard_normal(n), 6000) * env(n, .0002, .004) * 2
+    body = chirp_sine(240, 70, sec) * env(n, .002, .07) * .9
+    ring = (np.sin(2 * np.pi * 2637 * x) + .5 * np.sin(2 * np.pi * 3951 * x)) * np.exp(-x / .09) * .25
+    return np.tanh((hiss + snap + body + ring) * 1.3)
+
 for name, fn in [('pop', pop), ('boop', boop), ('whoosh', whoosh), ('land', land), ('clang', clang),
-                 ('hit', hit), ('tick', tick), ('go', go), ('win', win), ('drum', drum)]:
+                 ('hit', hit), ('tick', tick), ('go', go), ('win', win), ('drum', drum),
+                 ('shing', shing), ('swish', swish), ('slice', slice_)]:
     save(name, fn())
 print(sorted(os.listdir(OUT)))

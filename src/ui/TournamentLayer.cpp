@@ -10,6 +10,20 @@
 using namespace geode::prelude;
 
 namespace nt::ui {
+    namespace {
+        constexpr float kPollLobbyFast = .7f;  // the lobby polls a little faster so walking looks live
+        constexpr float kMoveSendGap = .3f;    // at most this often we tell the server where we are
+
+        void pulse(CCMenuItemSpriteExtra* btn) {
+            auto* img = btn ? btn->getNormalImage() : nullptr;
+            if (!img) return;
+            float s = img->getScale();
+            img->runAction(CCRepeatForever::create(CCSequence::create(
+                CCEaseSineInOut::create(CCScaleTo::create(.7f, s * 1.07f)),
+                CCEaseSineInOut::create(CCScaleTo::create(.7f, s)), nullptr)));
+        }
+    }
+
     CCScene* TournamentLayer::scene(std::string const& code, bool justJoined) {
         auto* scene = CCScene::create();
         scene->addChild(TournamentLayer::create(code, justJoined));
@@ -39,6 +53,9 @@ namespace nt::ui {
         m_arena = Arena::create(win, 58.f);
         m_arena->setMe(m_me);
         this->addChild(m_arena, 0);
+
+        m_roller = LevelRoller::create();
+        this->addChild(m_roller);
 
         // top bar
         auto* bar = Plate::create({win.width - 16.f, 40.f}, col::navyDeep, .82f, col::gold, .55f, 10.f, 1.4f);
@@ -96,6 +113,7 @@ namespace nt::ui {
         this->addChild(m_loading, 30);
 
         this->setKeypadEnabled(true);
+        this->setKeyboardEnabled(true);
         this->setTouchEnabled(true);
         this->schedule(schedule_selector(TournamentLayer::poll), 0.f);
         m_pollTimer = 99.f;
@@ -108,6 +126,11 @@ namespace nt::ui {
         m_pollTimer = 99.f;
     }
 
+    void TournamentLayer::onExit() {
+        this->releaseKeys();
+        CCLayer::onExit();
+    }
+
     void TournamentLayer::keyBackClicked() {
         this->onBack();
     }
@@ -115,10 +138,96 @@ namespace nt::ui {
     void TournamentLayer::onBack() {
         if (m_busy) return;
         m_busy = true;
+        this->releaseKeys();
         this->unschedule(schedule_selector(TournamentLayer::poll));
         if (m_state.t.running() && m_state.player(m_me)) MatchController::get()->watch(m_code);
         CCDirector::get()->popSceneWithTransition(.4f, kPopTransitionFade);
     }
+
+    // ---------------------------------------------------------------- walking around the lobby
+
+    void TournamentLayer::keyDown(enumKeyCodes key, double timestamp) {
+        switch (key) {
+            case KEY_A:
+            case KEY_Left: m_left = true; break;
+            case KEY_D:
+            case KEY_Right: m_right = true; break;
+            case KEY_W:
+            case KEY_Up:
+            case KEY_Space:
+                if (!m_jumpHeld) m_arena->jumpMe();
+                m_jumpHeld = true;
+                break;
+            default: CCLayer::keyDown(key, timestamp); return;
+        }
+        m_arena->steer((m_right ? 1 : 0) - (m_left ? 1 : 0));
+    }
+
+    void TournamentLayer::keyUp(enumKeyCodes key, double timestamp) {
+        switch (key) {
+            case KEY_A:
+            case KEY_Left: m_left = false; break;
+            case KEY_D:
+            case KEY_Right: m_right = false; break;
+            case KEY_W:
+            case KEY_Up:
+            case KEY_Space: m_jumpHeld = false; break;
+            default: CCLayer::keyUp(key, timestamp); return;
+        }
+        m_arena->steer((m_right ? 1 : 0) - (m_left ? 1 : 0));
+    }
+
+    void TournamentLayer::releaseKeys() {
+        m_left = m_right = m_jumpHeld = false;
+        if (m_arena) m_arena->steer(0);
+    }
+
+    void TournamentLayer::tickMovement(float dt) {
+        if (!m_loaded || !m_state.t.lobby()) return;
+        // a popup takes the keyboard: its key-ups never reach us, so let go of everything
+        if (m_left || m_right || m_jumpHeld) {
+            if (auto* scene = CCDirector::get()->getRunningScene()) {
+                for (auto* child : CCArrayExt<CCNode*>(scene->getChildren())) {
+                    if (typeinfo_cast<FLAlertLayer*>(child)) {
+                        this->releaseKeys();
+                        break;
+                    }
+                }
+            }
+        }
+        // holding jump keeps hopping, like holding in a level
+        if (m_jumpHeld) m_arena->jumpMe();
+
+        if (m_arena->myMoved() && m_moveHint && !m_movedOnce) {
+            m_movedOnce = true;
+            m_moveHint->runAction(CCSequence::create(CCFadeOut::create(.4f), CCRemoveSelf::create(), nullptr));
+            m_moveHint = nullptr;
+        }
+
+        m_moveTimer += dt;
+        if (!m_arena->myMoved() || m_moveSending || m_moveTimer < kMoveSendGap) return;
+        m_moveTimer = 0.f;
+        m_moveSending = true;
+        m_arena->clearMyMoved();
+        auto args = matjson::makeObject({{"code", m_code}, {"x", m_arena->myX01()}, {"j", m_arena->myJumps()}});
+        api::call(m_moveReq, "nt_move", withAuth(args), [this](api::Reply) { m_moveSending = false; });
+    }
+
+    void TournamentLayer::showMoveHint() {
+        if (m_moveHint || m_movedOnce || !m_arena->canMove()) return;
+        auto win = CCDirector::get()->getWinSize();
+        m_moveHint = CCNode::create();
+        auto* text = label("A / D  walk      W  jump      or tap the ground", "bigFont.fnt", .27f, col::white);
+        text->setOpacity(190);
+        m_moveHint->addChild(text);
+        m_moveHint->setPosition({win.width / 2.f, 50.f});
+        this->addChild(m_moveHint, 15);
+        text->setScale(0.f);
+        text->runAction(CCSequence::create(CCDelayTime::create(1.4f), CCEaseBackOut::create(CCScaleTo::create(.3f, .27f)),
+                                           CCDelayTime::create(9.f), CCFadeOut::create(.6f), nullptr));
+    }
+
+    // ---------------------------------------------------------------- touches
 
     void TournamentLayer::registerWithTouchDispatcher() {
         CCTouchDispatcher::get()->addTargetedDelegate(this, 0, false);
@@ -135,6 +244,7 @@ namespace nt::ui {
         auto local = m_arena->convertToNodeSpace(p);
         bool isHost = m_state.isHost(m_me);
         if (int acc = m_arena->avatarAt(local)) {
+            this->releaseKeys();
             if (auto* modal = PlayerModal::create(m_state, acc, isHost, [this, acc] {
                     this->host("kick", matjson::makeObject({{"target", acc}}));
                 })) {
@@ -142,10 +252,17 @@ namespace nt::ui {
             }
             return;
         }
+        // in the lobby: walk to where you tapped
+        auto win = CCDirector::get()->getWinSize();
+        if (m_state.t.lobby() && m_arena->canMove() && p.y < win.height - 50.f) {
+            m_arena->walkMeTo(local.x);
+            return;
+        }
         int r, s;
         if (isHost && m_arena->matchAt(local, r, s)) {
             auto* m = m_state.match(r, s);
             if (!m || m->done() || !m->p1 || !m->p2) return;
+            this->releaseKeys();
             if (auto* modal = MatchModal::create(m_state, *m, [this, r, s](int winner) {
                     this->host("win", matjson::makeObject({{"round", r}, {"slot", s}, {"target", winner}}));
                 })) {
@@ -157,8 +274,9 @@ namespace nt::ui {
     // ---------------------------------------------------------------- polling
 
     void TournamentLayer::poll(float dt) {
+        this->tickMovement(dt);
         m_pollTimer += dt;
-        float interval = kPollLobby;
+        float interval = m_state.t.lobby() ? kPollLobbyFast : kPollLobby;
         if (m_failures > 0) interval = std::min(8.f, 1.5f * m_failures);
         if (m_polling || m_busy || m_pollTimer < interval) return;
         m_pollTimer = 0.f;
@@ -218,12 +336,15 @@ namespace nt::ui {
                     }), nullptr));
                     if (i > 8) break;
                 }
+                this->showMoveHint();
             }
+            m_revealedId = m_state.t.level.id;
         } else {
             this->handleEvents(events);
             if (replaced) m_arena->sync(m_state);
             else m_arena->tickLive(m_state);
             m_backdrop->setGround(m_state.t.lobby(), true);
+            if (m_state.t.lobby()) this->showMoveHint();
         }
         this->refreshChrome();
         this->setLevelCard();
@@ -255,12 +376,21 @@ namespace nt::ui {
                 m_arena->onEmote(e.account, jint(e.data, "e", 1));
             } else if (e.kind == "start") {
                 this->feed("The bracket is set!", col::gold);
+                this->releaseKeys();
+                if (m_moveHint) {
+                    m_moveHint->removeFromParent();
+                    m_moveHint = nullptr;
+                }
                 m_backdrop->setGround(false, true);
                 m_arena->onStart(m_state);
             } else if (e.kind == "level") {
-                this->feed("Level: " + jstr(e.data, "name", "?"), col::gold);
-                m_levelShown = -1;
-                fx::play("tick");
+                LevelRef lv;
+                lv.id = jlong(e.data, "id");
+                lv.name = jstr(e.data, "name");
+                lv.author = jstr(e.data, "author");
+                lv.face = jint(e.data, "diff") - 1;
+                this->feed("Level: " + (lv.name.empty() ? std::to_string(lv.id) : lv.name), col::gold);
+                this->showReveal(lv, jint(e.data, "r", m_state.nextRound()));
             } else if (e.kind == "round") {
                 int r = jint(e.data, "r");
                 auto name = roundName(r, m_state.t.rounds);
@@ -309,9 +439,98 @@ namespace nt::ui {
             CCRemoveSelf::create(), nullptr));
     }
 
+    // ---------------------------------------------------------------- the level roll
+
+    std::string TournamentLayer::revealTitle(int round) const {
+        int rounds = std::max(1, m_state.t.rounds);
+        if (round <= 0) round = 1;
+        if (round >= rounds) return "LEVEL FOR THE FINAL";
+        auto name = roundName(round, rounds);
+        if (rounds - round <= 2) return "LEVEL FOR THE " + name;
+        return "LEVEL FOR " + name;
+    }
+
+    void TournamentLayer::rollLevel() {
+        if (m_rolling || m_revealing || !m_state.isHost(m_me)) return;
+        int next = m_state.nextRound();
+        if (next <= 0) return;
+        m_rolling = true;
+        m_revealing = true;
+        m_rolledId = 0;
+        if (auto old = m_reveal.lock()) old->removeFromParent();
+        auto* reveal = LevelReveal::create(m_state.t.pool, this->revealTitle(next));
+        this->addChild(reveal, 40);
+        reveal->spin();
+        m_reveal = WeakRef<LevelReveal>(reveal);
+        fx::play("whoosh");
+        this->refreshChrome(true);
+
+        m_roller->roll(m_state.t.pool, [this](LevelRef lv, std::string err) {
+            if (!lv.valid()) {
+                m_rolling = false;
+                m_revealing = false;
+                if (auto r = m_reveal.lock()) r->fail(err.empty() ? std::string("No level found. Try again!") : err);
+                m_reveal = WeakRef<LevelReveal>();
+                this->refreshChrome(true);
+                return;
+            }
+            m_rolledId = lv.id;
+            m_revealedId = lv.id;
+            auto args = matjson::makeObject({{"level_id", lv.id},
+                                             {"level_name", lv.name},
+                                             {"level_author", lv.author},
+                                             {"level_diff", lv.face + 1}});
+            this->host("level", args, [this, lv](bool ok) {
+                m_rolling = false;
+                auto r = m_reveal.lock();
+                if (!ok) {
+                    m_revealing = false;
+                    if (r) r->fail("Couldn't save the level. Try again!");
+                    m_reveal = WeakRef<LevelReveal>();
+                    this->refreshChrome(true);
+                    return;
+                }
+                if (r) r->land(lv, [this] { this->revealDone(); });
+                else this->revealDone();
+                this->refreshChrome(true);
+            });
+        });
+    }
+
+    void TournamentLayer::showReveal(LevelRef const& level, int round) {
+        if (!level.valid() || level.id == m_revealedId) return;
+        // our own roll lands by itself
+        if (m_rolling || (m_rolledId && level.id == m_rolledId)) return;
+        m_revealedId = level.id;
+        m_revealing = true;
+        if (auto old = m_reveal.lock()) old->removeFromParent();
+        auto* reveal = LevelReveal::create(m_state.t.pool, this->revealTitle(round));
+        this->addChild(reveal, 40);
+        reveal->spin();
+        m_reveal = WeakRef<LevelReveal>(reveal);
+        fx::play("whoosh");
+        // a short drumroll for everyone watching, then the slam
+        WeakRef<LevelReveal> weak(reveal);
+        auto lv = level;
+        this->runAction(CCSequence::create(CCDelayTime::create(.9f), CallFuncExt::create([this, weak, lv] {
+            if (auto r = weak.lock()) r->land(lv, [this] { this->revealDone(); });
+            else this->revealDone();
+        }), nullptr));
+        this->refreshChrome(true);
+    }
+
+    void TournamentLayer::revealDone() {
+        m_revealing = false;
+        m_reveal = WeakRef<LevelReveal>();
+        m_levelShown = -1;
+        this->setLevelCard();
+        this->refreshChrome(true);
+    }
+
     // ---------------------------------------------------------------- chrome
 
     void TournamentLayer::setLevelCard() {
+        if (m_revealing) return;  // the reveal flies into this corner and becomes the card
         auto const& lv = m_state.t.level;
         if (lv.id == m_levelShown) return;
         m_levelShown = lv.id;
@@ -339,13 +558,13 @@ namespace nt::ui {
         by->setAnchorPoint({0.f, .5f});
         by->setPosition({34.f, 9.f});
         m_levelCard->addChild(by);
-        m_levelCard->setPosition({win.width - 178.f, win.height - 86.f});
+        CCPoint at {win.width - 178.f, win.height - 86.f};
         this->addChild(m_levelCard, 11);
-        m_levelCard->setPositionX(win.width + 10.f);
-        m_levelCard->runAction(CCEaseBackOut::create(CCMoveTo::create(.4f, {win.width - 178.f, win.height - 86.f})));
+        m_levelCard->setPosition(at);
+        fx::popIn(m_levelCard, 1.f, 0.f, .35f);
     }
 
-    void TournamentLayer::refreshChrome() {
+    void TournamentLayer::refreshChrome(bool force) {
         auto win = CCDirector::get()->getWinSize();
         auto const& t = m_state.t;
         m_title->setString(t.name.c_str());
@@ -362,16 +581,16 @@ namespace nt::ui {
         if (auto* p = m_state.player(m_me)) joined = p->status == "in" || p->status == "out";
         bool host = m_state.isHost(m_me);
         bool anyLive = false;
-        bool roundPending = false;
         for (auto const& m : m_state.matches) {
             if (m.round == t.round && m.live()) anyLive = true;
-            if (m.round == t.round && m.state == "pending" && (m.p1 || m.p2)) roundPending = true;
         }
+        int next = m_state.nextRound();
+        bool rolled = next > 0 && t.levelRound == next && t.level.valid();
         auto* myMatch = m_state.currentMatch(m_me);
         bool canReturn = myMatch && myMatch->live() && MatchController::get()->isMatch(m_code, myMatch->round, myMatch->slot);
-        auto key = fmt::format("{}|{}|{}|{}|{}|{}|{}|{}|{}", t.state, joined, host, t.round, anyLive, roundPending,
-                               t.level.id, canReturn, t.count);
-        if (key == m_chromeKey) return;
+        auto key = fmt::format("{}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}", t.state, joined, host, t.round, anyLive, next,
+                               rolled, canReturn, t.count, m_rolling, m_revealing, t.level.id);
+        if (key == m_chromeKey && !force) return;
         m_chromeKey = key;
         m_bottom->removeAllChildren();
 
@@ -393,11 +612,7 @@ namespace nt::ui {
             auto* join = textButton("Join", "GJ_button_01.png", .85f, [this](auto) { this->onJoin(); });
             join->setPosition({win.width / 2.f - (host ? 120.f : 0.f), y + 2.f});
             m_bottom->addChild(join);
-            if (auto* img = join->getNormalImage()) {
-                img->runAction(CCRepeatForever::create(CCSequence::create(
-                    CCEaseSineInOut::create(CCScaleTo::create(.7f, .92f)),
-                    CCEaseSineInOut::create(CCScaleTo::create(.7f, .85f)), nullptr)));
-            }
+            pulse(join);
         }
 
         if (canReturn) {
@@ -410,60 +625,56 @@ namespace nt::ui {
             m_bottom->addChild(back);
         }
 
-        if (host) {
-            if (t.lobby()) {
-                auto* start = textButton(t.count >= 2 ? "Start tournament" : "Need 2 players",
-                                         t.count >= 2 ? "GJ_button_01.png" : "GJ_button_04.png", .65f, [this](auto) {
-                    if (m_state.t.count < 2) return;
-                    if (auto* m = ConfirmModal::create("Start?", "Lock the bracket with the players who are here now?",
-                                                       "Start", [this] { this->host("start"); })) {
-                        m->show();
-                    }
-                });
-                start->setPosition({win.width / 2.f + (joined ? 75.f : 140.f), y});
-                m_bottom->addChild(start);
-                // practice bots: try the whole thing (or show it off) without a second player
-                if (t.count < t.max) {
-                    auto* bots = textButton("Add bots", "GJ_button_02.png", .5f, [this](auto) {
-                        this->host("bots", matjson::makeObject({{"count", 3}}));
-                    });
-                    bots->setPosition({win.width / 2.f + (joined ? -60.f : 10.f), y});
-                    m_bottom->addChild(bots);
+        if (!host) return;
+        if (t.lobby()) {
+            auto* start = textButton(t.count >= 2 ? "Start tournament" : "Need 2 players",
+                                     t.count >= 2 ? "GJ_button_01.png" : "GJ_button_04.png", .65f, [this](auto) {
+                if (m_state.t.count < 2) return;
+                this->releaseKeys();
+                if (auto* m = ConfirmModal::create("Start?", "Lock the bracket with the players who are here now?",
+                                                   "Start", [this] { this->host("start"); })) {
+                    m->show();
                 }
-            } else if (t.running()) {
-                auto* level = textButton(t.level.valid() ? "Change level" : "Pick level",
-                                         t.level.valid() ? "GJ_button_04.png" : "GJ_button_02.png", .55f, [this](auto) {
-                    if (auto* m = LevelModal::create([this](LevelRef lv) {
-                            this->host("level", matjson::makeObject({{"level_id", lv.id},
-                                                                     {"level_name", lv.name},
-                                                                     {"level_author", lv.author},
-                                                                     {"level_diff", lv.face + 1}}));
-                        })) {
-                        m->show();
-                    }
+            });
+            start->setPosition({win.width / 2.f + (joined ? 75.f : 140.f), y});
+            m_bottom->addChild(start);
+            // practice bots: try the whole thing (or show it off) without a second player
+            if (t.count < t.max) {
+                auto* bots = textButton("Add bots", "GJ_button_02.png", .5f, [this](auto) {
+                    this->host("bots", matjson::makeObject({{"count", 3}}));
                 });
-                level->setPosition({win.width / 2.f - 70.f, y});
-                m_bottom->addChild(level);
-                bool ready = !anyLive && t.level.valid() && (roundPending || t.round < t.rounds);
-                int next = roundPending ? t.round : t.round + 1;
-                std::string text = anyLive ? "Round in progress" : !t.level.valid() ? "Pick a level first"
-                                 : fmt::format("Start {}", roundName(next, t.rounds));
-                auto* round = textButton(text, ready ? "GJ_button_01.png" : "GJ_button_04.png", .55f, [this, ready](auto) {
-                    if (!ready) return;
-                    this->host("round");
-                });
-                round->setPosition({win.width / 2.f + 80.f, y});
-                m_bottom->addChild(round);
-            } else if (t.finished()) {
-                auto* close = textButton("Close tournament", "GJ_button_06.png", .55f, [this](auto) {
-                    if (auto* m = ConfirmModal::create("Close?", "Remove this tournament from the list?", "Close",
-                                                       [this] { this->host("close"); }, true)) {
-                        m->show();
-                    }
-                });
-                close->setPosition({win.width / 2.f, y});
-                m_bottom->addChild(close);
+                bots->setPosition({win.width / 2.f + (joined ? -60.f : 10.f), y});
+                m_bottom->addChild(bots);
             }
+        } else if (t.running() && next > 0) {
+            bool busy = m_rolling || m_revealing;
+            std::string rollText = m_rolling ? "Rolling..." : rolled ? "Reroll" : "Roll level";
+            auto* roll = textButton(rollText, rolled || busy ? "GJ_button_04.png" : "GJ_button_02.png", .55f, [this](auto) {
+                this->rollLevel();
+            });
+            roll->setPosition({win.width / 2.f - 70.f, y});
+            m_bottom->addChild(roll);
+            if (!rolled && !busy && !anyLive) pulse(roll);
+
+            bool ready = rolled && !anyLive && !busy;
+            std::string text = anyLive ? "Round in progress" : !rolled ? "Roll a level first"
+                             : fmt::format("Start {}", roundName(next, t.rounds));
+            auto* round = textButton(text, ready ? "GJ_button_01.png" : "GJ_button_04.png", .55f, [this, ready](auto) {
+                if (!ready) return;
+                this->host("round");
+            });
+            round->setPosition({win.width / 2.f + 80.f, y});
+            m_bottom->addChild(round);
+            if (ready) pulse(round);
+        } else if (t.finished()) {
+            auto* close = textButton("Close tournament", "GJ_button_06.png", .55f, [this](auto) {
+                if (auto* m = ConfirmModal::create("Close?", "Remove this tournament from the list?", "Close",
+                                                   [this] { this->host("close"); }, true)) {
+                    m->show();
+                }
+            });
+            close->setPosition({win.width / 2.f, y});
+            m_bottom->addChild(close);
         }
     }
 
@@ -478,21 +689,25 @@ namespace nt::ui {
         if (mc->launchedOnce()) return;
         if (serverNowMs() > m->startsAt + 45000) return;
         m_busy = true;
+        this->releaseKeys();
         this->unschedule(schedule_selector(TournamentLayer::poll));
         CCDirector::get()->replaceScene(CCTransitionFade::create(.4f, VsLayer::scene()));
     }
 
     // ---------------------------------------------------------------- actions
 
-    void TournamentLayer::host(std::string const& action, matjson::Value extra) {
+    void TournamentLayer::host(std::string const& action, matjson::Value extra, std::function<void(bool)> done) {
         extra["code"] = m_code;
         extra["action"] = action;
-        api::call(m_actionReq, "nt_host", withAuth(extra), [this](api::Reply reply) {
+        auto& holder = action == "level" ? m_levelReq : m_actionReq;
+        api::call(holder, "nt_host", withAuth(extra), [this, done](api::Reply reply) {
             if (reply.isErr()) {
                 Notification::create(api::describe(reply.unwrapErr()), NotificationIcon::Error, 2.5f)->show();
+                if (done) done(false);
                 return;
             }
             m_pollTimer = 99.f;
+            if (done) done(true);
         });
     }
 
@@ -512,6 +727,7 @@ namespace nt::ui {
     }
 
     void TournamentLayer::onLeave() {
+        this->releaseKeys();
         std::string text = m_state.t.lobby() ? "Leave the lobby?" : "Leaving now forfeits your match. Leave?";
         if (auto* m = ConfirmModal::create("Leave", text, "Leave", [this] {
                 api::call(m_actionReq, "nt_leave", withAuth(matjson::makeObject({{"code", m_code}})), [this](api::Reply reply) {
@@ -528,6 +744,7 @@ namespace nt::ui {
     }
 
     void TournamentLayer::onEmote() {
+        this->releaseKeys();
         if (auto* m = EmoteModal::create([this](int id) {
                 m_lastLocalEmote = api::localMs();
                 m_arena->onEmote(m_me, id);

@@ -11,8 +11,11 @@ namespace nt::fx {
     float rnd(float lo, float hi);
     int rndi(int lo, int hi);
 
-    // Plays one of the mod's own sounds (resources/sfx/<name>.ogg).
-    void play(char const* name);
+    // Plays one of the mod's own sounds (resources/sfx/<name>.ogg). speed also shifts the pitch.
+    void play(char const* name, float volume = 1.f, float speed = 1.f);
+    // The same, but at most once every `gap` seconds across the whole mod (busy brackets
+    // would otherwise stack dozens of the same sound). Returns whether it played.
+    bool playLimited(char const* name, float gap, float volume = 1.f, float speed = 1.f);
 
     // Simple physics particles: velocity, gravity, drag, spin, fade.
     class Particles : public CCNode {

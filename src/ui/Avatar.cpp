@@ -7,6 +7,12 @@ using namespace geode::prelude;
 namespace nt::ui {
     namespace {
         constexpr int kBobTag = 0xB0B;
+        constexpr int kTiltTag = 0x7117;
+        // hops leave the cube turned by a multiple of 90 degrees, like in GD: tilts are made
+        // around that resting turn so the face never snaps back upright
+        float restSpin(CCNode* icon) {
+            return std::round(icon->getRotation() / 90.f) * 90.f;
+        }
     }
 
     Avatar* Avatar::create(Player const& player, float scale, bool nameTag) {
@@ -107,14 +113,17 @@ namespace nt::ui {
             }
             m_mark->setScale(.0f);
             m_mark->runAction(CCEaseBackOut::create(CCScaleTo::create(animate ? .3f : 0.f, .55f + .25f * m_scale)));
-            m_icon->runAction(CCEaseBackOut::create(CCRotateTo::create(animate ? .35f : 0.f, 14.f)));
+            m_icon->stopActionByTag(kTiltTag);
+            auto* slump = CCEaseBackOut::create(CCRotateTo::create(animate ? .35f : 0.f, restSpin(m_icon) + 14.f));
+            slump->setTag(kTiltTag);
+            m_icon->runAction(slump);
             m_shadow->setOpacity(70);
         } else {
             if (m_mark) {
                 m_mark->removeFromParent();
                 m_mark = nullptr;
             }
-            m_icon->setRotation(0.f);
+            m_icon->setRotation(restSpin(m_icon));
             m_shadow->setOpacity(150);
         }
     }
@@ -162,11 +171,46 @@ namespace nt::ui {
 
     void Avatar::randomHop(float) {
         if (!m_idle) return;
-        if (!busy && !m_dimmed) {
+        if (!busy && !m_dimmed && m_autoHop && !m_walking) {
             if (fx::rndi(0, 5) == 0) this->wave(false);
             else this->hop(fx::rnd(8.f, 14.f) * std::max(.6f, m_scale));
         }
         this->scheduleRandomHop();
+    }
+
+    void Avatar::setWalking(bool walking, int dir) {
+        constexpr int kWalkTag = 0x3A1C;
+        auto tilt = [this](float to, float time) {
+            m_icon->stopActionByTag(kTiltTag);
+            auto* act = CCEaseSineOut::create(CCRotateTo::create(time, to));
+            act->setTag(kTiltTag);
+            m_icon->runAction(act);
+        };
+        if (walking == m_walking) {
+            if (walking && dir && dir != m_walkDir) {
+                m_walkDir = dir;
+                tilt(restSpin(m_icon) + dir * 7.f, .1f);
+            }
+            return;
+        }
+        m_walking = walking;
+        m_walkDir = walking ? dir : 0;
+        m_body->stopActionByTag(kWalkTag);
+        if (!walking) {
+            m_body->runAction(CCEaseElasticOut::create(CCScaleTo::create(.3f, 1.f), .4f));
+            tilt(restSpin(m_icon), .15f);
+            return;
+        }
+        if (dir) tilt(restSpin(m_icon) + dir * 7.f, .1f);
+        auto* step = CCRepeatForever::create(CCSequence::create(
+            CCEaseSineOut::create(CCScaleTo::create(.09f, 1.06f, .9f)),
+            CCEaseSineIn::create(CCScaleTo::create(.09f, .96f, 1.06f)), nullptr));
+        step->setTag(kWalkTag);
+        m_body->runAction(step);
+    }
+
+    bool Avatar::onGround() const {
+        return std::abs(m_body->getPositionY()) < .5f;
     }
 
     void Avatar::setScaleSmooth(float scale, float time) {
@@ -197,14 +241,16 @@ namespace nt::ui {
 
     void Avatar::wave(bool withBubble) {
         // a friendly side-to-side tilt, like waving with the whole cube
-        m_icon->stopAllActions();
-        m_icon->setRotation(0.f);
-        m_icon->runAction(CCSequence::create(
-            CCEaseSineOut::create(CCRotateTo::create(.12f, -16.f)),
-            CCEaseSineInOut::create(CCRotateTo::create(.16f, 14.f)),
-            CCEaseSineInOut::create(CCRotateTo::create(.16f, -11.f)),
-            CCEaseSineInOut::create(CCRotateTo::create(.14f, 7.f)),
-            CCEaseSineOut::create(CCRotateTo::create(.12f, 0.f)), nullptr));
+        m_icon->stopActionByTag(kTiltTag);
+        float r = restSpin(m_icon);
+        auto* wiggle = CCSequence::create(
+            CCEaseSineOut::create(CCRotateTo::create(.12f, r - 16.f)),
+            CCEaseSineInOut::create(CCRotateTo::create(.16f, r + 14.f)),
+            CCEaseSineInOut::create(CCRotateTo::create(.16f, r - 11.f)),
+            CCEaseSineInOut::create(CCRotateTo::create(.14f, r + 7.f)),
+            CCEaseSineOut::create(CCRotateTo::create(.12f, r)), nullptr);
+        wiggle->setTag(kTiltTag);
+        m_icon->runAction(wiggle);
         if (withBubble) this->emote(1, 1.6f);
     }
 
@@ -316,7 +362,127 @@ namespace nt::ui {
             CCJumpBy::create(1.f, {dx, -40.f}, 150.f, 1), CCRemoveSelf::create(), nullptr));
     }
 
+    // ---------------------------------------------------------------- sword
+
+    void Avatar::setSword(bool on, int facing) {
+        m_facing = facing >= 0 ? 1 : -1;
+        if (!on) {
+            if (m_hand) m_hand->removeFromParent();
+            m_hand = nullptr;
+            m_sword = nullptr;
+            return;
+        }
+        if (!m_hand) {
+            m_hand = CCNode::create();
+            m_bob->addChild(m_hand, 2);
+            m_sword = fx("sword");
+            m_sword->setAnchorPoint({.5f, .21f});  // the grip
+            m_sword->setScale(.62f * m_scale);
+            m_hand->addChild(m_sword);
+        }
+        m_hand->setPosition({m_facing * 12.5f * m_scale, 12.f * m_scale});
+        m_sword->setFlipX(m_facing < 0);
+        this->setSwordAngle(kSwordRest);
+    }
+
+    void Avatar::swordDraw(int facing, float delay) {
+        this->setSword(true, facing);
+        float full = .62f * m_scale;
+        m_sword->stopAllActions();
+        m_sword->setScale(0.f);
+        m_sword->setRotation(-70.f * m_facing);
+        m_sword->runAction(CCSequence::create(
+            CCDelayTime::create(delay),
+            CallFuncExt::create([] { fx::playLimited("shing", .09f, .45f, fx::rnd(.94f, 1.1f)); }),
+            CCEaseBackOut::create(CCScaleTo::create(.2f, full)), nullptr));
+        auto* swing = CCSequence::create(
+            CCDelayTime::create(delay),
+            CCEaseBackOut::create(CCRotateTo::create(.38f, kSwordRest * m_facing)), nullptr);
+        swing->setTag(0x5D);
+        m_sword->runAction(swing);
+    }
+
+    void Avatar::flinch() {
+        m_icon->stopActionByTag(kTiltTag);
+        float r = restSpin(m_icon);
+        auto* rock = CCSequence::create(
+            CCEaseOut::create(CCRotateTo::create(.06f, r - 14.f * m_facing), 2.f),
+            CCEaseElasticOut::create(CCRotateTo::create(.45f, r), .35f), nullptr);
+        rock->setTag(kTiltTag);
+        m_icon->runAction(rock);
+        this->squash(.4f);
+    }
+
+    void Avatar::setFacing(int facing) {
+        int f = facing >= 0 ? 1 : -1;
+        if (!m_hand) {
+            m_facing = f;
+            return;
+        }
+        if (f == m_facing) return;  // (keeps any swing in progress)
+        float angle = m_sword->getRotation() * m_facing;
+        m_facing = facing >= 0 ? 1 : -1;
+        m_hand->setPosition({m_facing * 12.5f * m_scale, 12.f * m_scale});
+        m_sword->setFlipX(m_facing < 0);
+        this->setSwordAngle(angle);
+    }
+
+    void Avatar::setSwordAngle(float deg) {
+        if (!m_sword) return;
+        m_sword->stopActionByTag(0x5D);
+        m_sword->setRotation(deg * m_facing);
+    }
+
+    void Avatar::swordTo(float deg, float time) {
+        if (!m_sword) return;
+        m_sword->stopActionByTag(0x5D);
+        auto* act = CCEaseSineInOut::create(CCRotateTo::create(time, deg * m_facing));
+        act->setTag(0x5D);
+        m_sword->runAction(act);
+    }
+
+    CCPoint Avatar::handWorld() {
+        if (!m_hand) return this->getPosition() + ccp(m_facing * 12.5f * m_scale, 12.f * m_scale) * this->getScale();
+        return this->getPosition() + (m_hand->getPosition() + m_bob->getPosition() + m_body->getPosition()) * this->getScale();
+    }
+
+    CCPoint Avatar::swordTipWorld() {
+        float rad = (m_sword ? m_sword->getRotation() : 0.f) * 3.14159265f / 180.f;
+        float len = 52.f * .79f * .62f * m_scale * this->getScale();
+        return this->handWorld() + ccp(std::sin(rad), std::cos(rad)) * len;
+    }
+
+    void Avatar::swordDrop() {
+        if (!m_sword || !this->getParent()) {
+            this->setSword(false, m_facing);
+            return;
+        }
+        auto* parent = this->getParent();
+        auto* loose = fx("sword");
+        loose->setAnchorPoint({.5f, .21f});
+        loose->setScale(m_sword->getScale() * this->getScale());
+        loose->setRotation(m_sword->getRotation());
+        loose->setFlipX(m_facing < 0);
+        loose->setPosition(this->handWorld());
+        parent->addChild(loose, this->getZOrder() + 1);
+        float dir = -static_cast<float>(m_facing);
+        loose->runAction(CCSequence::create(
+            CCSpawn::create(CCJumpBy::create(.65f, {dir * 22.f * m_scale, -12.f * m_scale}, 26.f * m_scale, 1),
+                            CCRotateBy::create(.65f, dir * 560.f), nullptr),
+            CCDelayTime::create(.4f), CCFadeOut::create(.4f), CCRemoveSelf::create(), nullptr));
+        this->setSword(false, m_facing);
+    }
+
+    void Avatar::swordRaise() {
+        if (!m_sword) return;
+        this->swordTo(-6.f, .22f);
+        this->runAction(CCSequence::create(CCDelayTime::create(.22f), CallFuncExt::create([this] {
+            fx::stars(this->getParent(), this->swordTipWorld(), 4, col::goldLight, 14.f, this->getZOrder() + 2);
+        }), nullptr));
+    }
+
     void Avatar::knockOut() {
+        this->swordDrop();
         auto* parent = this->getParent();
         auto pos = this->getPosition() + ccp(0.f, 15.f * m_scale * this->getScale());
         fx::deathBurst(parent, pos, iconColor(m_player.icon.p), iconColor(m_player.icon.s), .5f + .5f * m_scale,

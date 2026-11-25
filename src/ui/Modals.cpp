@@ -1,26 +1,12 @@
 #include "Modals.hpp"
 #include "Fx.hpp"
 #include "../core/Compat.hpp"
+#include "../core/Levels.hpp"
 #include "../core/Session.hpp"
 
 using namespace geode::prelude;
 
 namespace nt::ui {
-    int faceFor(GJGameLevel* level) {
-        if (!level) return 0;
-        if (level->m_autoLevel) return -1;
-        if (level->m_demon.value() != 0) {
-            switch (level->m_demonDifficulty) {
-                case 3: return 7;
-                case 4: return 8;
-                case 5: return 9;
-                case 6: return 10;
-                default: return 6;
-            }
-        }
-        return std::clamp(level->getAverageDifficulty(), 0, 5);
-    }
-
     // ---------------------------------------------------------------- Modal
 
     Modal::~Modal() {
@@ -257,11 +243,63 @@ namespace nt::ui {
                 plate->setBorder(on ? col::gold : col::blue, on ? 1.f : .45f);
             }
             if (auto* l = static_cast<CCLabelBMFont*>(node->getChildByTag(2))) l->setColor(on ? col::gold : col::dim);
+            if (auto* face = static_cast<CCSprite*>(node->getChildByTag(3))) {
+                face->setColor(on ? ccColor3B {255, 255, 255} : ccColor3B {80, 86, 110});
+                face->setOpacity(on ? 255 : 150);
+            }
+        }
+        if (m_poolNote) {
+            auto picked = poolOptions(m_set.pool);
+            std::string text;
+            if (picked.size() == difficulties().size()) text = "Any featured level";
+            else if (picked.size() == 1) text = std::string("Featured ") + picked[0].name + " levels";
+            else {
+                text = "Featured: ";
+                for (size_t i = 0; i < picked.size(); ++i) {
+                    if (i) text += i + 1 == picked.size() ? " or " : ", ";
+                    text += picked[i].name;
+                }
+            }
+            m_poolNote->setString(text.c_str());
+            fit(m_poolNote, 330.f, .55f);
         }
     }
 
+    CCMenuItemSpriteExtra* CreateModal::faceChip(Difficulty const& d, CCPoint pos) {
+        constexpr float w = 30.f, h = 34.f;
+        auto* node = CCNode::create();
+        node->setContentSize({w, h});
+        auto* plate = Plate::create({w, h}, col::navyDeep, .95f, col::blue, .5f, 6.f, 1.2f);
+        plate->setTag(1);
+        node->addChild(plate);
+        if (auto* face = difficulty(d.face)) {
+            float size = std::max(face->getContentSize().width, face->getContentSize().height);
+            face->setScale(size > 0.f ? 25.f / size : .5f);
+            face->setPosition({w / 2.f, h / 2.f + (d.demon ? 1.f : 0.f)});
+            face->setTag(3);
+            node->addChild(face);
+        }
+        int bit = d.bit;
+        auto* btn = nodeButton(node, [this, bit](CCMenuItemSpriteExtra* self) {
+            int next = m_set.pool ^ (1 << bit);
+            if (!(next & 1023)) {
+                // at least one difficulty has to stay in
+                fx::play("tick", .8f, .7f);
+                fx::shake(self, 3.f, .2f);
+                return;
+            }
+            m_set.pool = next;
+            this->refresh();
+            fx::play("tick");
+        });
+        btn->setPosition(pos);
+        m_buttonMenu->addChild(btn);
+        m_chips.push_back({btn, [this, bit] { return (m_set.pool & (1 << bit)) != 0; }});
+        return btn;
+    }
+
     bool CreateModal::init(std::function<void(CreateSettings)> cb) {
-        if (!this->initModal({380.f, 262.f}, "Create Tournament")) return false;
+        if (!this->initModal({380.f, 316.f}, "Create Tournament")) return false;
         m_cb = std::move(cb);
         auto self = me();
         m_set.name = self.name.empty() ? std::string("My Tournament") : self.name + "'s Tournament";
@@ -269,6 +307,7 @@ namespace nt::ui {
         m_set.max = Mod::get()->getSavedValue<int>("create-max", 16);
         m_set.time = Mod::get()->getSavedValue<int>("create-time", 180);
         m_set.play = Mod::get()->getSavedValue<bool>("create-play", true);
+        m_set.pool = std::clamp(static_cast<int>(Mod::get()->getSavedValue<int64_t>("create-pool", 96)), 1, 1023);
 
         auto row = [&](float y, char const* text) {
             auto* l = label(text, "goldFont.fnt", .5f, col::white);
@@ -277,43 +316,55 @@ namespace nt::ui {
             m_mainLayer->addChild(l);
         };
 
-        row(210.f, "Name");
-        m_name = this->addInput({236.f, 210.f}, 250.f, "Tournament name", m_set.name,
+        row(264.f, "Name");
+        m_name = this->addInput({236.f, 264.f}, 250.f, "Tournament name", m_set.name,
                                 " abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789'!?-&.#:", 32);
 
-        row(170.f, "Who");
-        m_chips.push_back({this->chip("Public", {170.f, 170.f}, 90.f, [this] { m_set.pub = true; }),
+        row(228.f, "Who");
+        m_chips.push_back({this->chip("Public", {170.f, 228.f}, 90.f, [this] { m_set.pub = true; }),
                            [this] { return m_set.pub; }});
-        m_chips.push_back({this->chip("Private (code)", {290.f, 170.f}, 120.f, [this] { m_set.pub = false; }),
+        m_chips.push_back({this->chip("Private (code)", {290.f, 228.f}, 120.f, [this] { m_set.pub = false; }),
                            [this] { return !m_set.pub; }});
 
-        row(132.f, "Players");
+        row(194.f, "Players");
         int maxes[] = {4, 8, 16, 32};
         for (int i = 0; i < 4; ++i) {
             int v = maxes[i];
-            m_chips.push_back({this->chip(std::to_string(v), {150.f + i * 56.f, 132.f}, 48.f, [this, v] { m_set.max = v; }),
+            m_chips.push_back({this->chip(std::to_string(v), {150.f + i * 56.f, 194.f}, 48.f, [this, v] { m_set.max = v; }),
                                [this, v] { return m_set.max == v; }});
         }
 
-        row(94.f, "Time");
+        row(160.f, "Time");
         int times[] = {60, 120, 180, 300, 600};
         for (int i = 0; i < 5; ++i) {
             int v = times[i];
-            m_chips.push_back({this->chip(fmt::format("{}m", v / 60), {142.f + i * 50.f, 94.f}, 42.f,
+            m_chips.push_back({this->chip(fmt::format("{}m", v / 60), {142.f + i * 50.f, 160.f}, 42.f,
                                           [this, v] { m_set.time = v; }),
                                [this, v] { return m_set.time == v; }});
         }
 
-        m_chips.push_back({this->chip("I'm playing too", {120.f, 56.f}, 150.f, [this] { m_set.play = !m_set.play; }),
+        // which difficulties the random levels are rolled from (tap to switch each one)
+        row(126.f, "Levels");
+        auto const& all = difficulties();
+        for (size_t i = 0; i < all.size(); ++i) {
+            float x = 36.f + static_cast<float>(i) * 34.f + (i >= 5 ? 6.f : 0.f);
+            this->faceChip(all[i], {x, 96.f});
+        }
+        m_poolNote = label("", "chatFont.fnt", .55f, col::dim);
+        m_poolNote->setPosition({190.f, 70.f});
+        m_mainLayer->addChild(m_poolNote);
+
+        m_chips.push_back({this->chip("I'm playing too", {100.f, 36.f}, 150.f, [this] { m_set.play = !m_set.play; }),
                            [this] { return m_set.play; }});
 
-        this->addButton("Create", "GJ_button_01.png", {292.f, 40.f}, .85f, [this](auto) {
+        this->addButton("Create", "GJ_button_01.png", {292.f, 36.f}, .85f, [this](auto) {
             auto name = compat::str(m_name->getString());
             if (!name.empty()) m_set.name = name;
             Mod::get()->setSavedValue<bool>("create-public", m_set.pub);
             Mod::get()->setSavedValue<int>("create-max", m_set.max);
             Mod::get()->setSavedValue<int>("create-time", m_set.time);
             Mod::get()->setSavedValue<bool>("create-play", m_set.play);
+            Mod::get()->setSavedValue<int64_t>("create-pool", m_set.pool);
             auto cb = m_cb;
             auto set = m_set;
             this->onClose(nullptr);
@@ -436,130 +487,5 @@ namespace nt::ui {
         vs->setPosition({150.f, 100.f});
         m_mainLayer->addChild(vs);
         return true;
-    }
-
-    // ---------------------------------------------------------------- LevelModal
-
-    LevelModal* LevelModal::create(std::function<void(LevelRef)> cb) {
-        auto* ret = new LevelModal();
-        if (ret->init(std::move(cb))) {
-            ret->autorelease();
-            return ret;
-        }
-        delete ret;
-        return nullptr;
-    }
-
-    LevelModal::~LevelModal() {
-        auto* glm = GameLevelManager::sharedState();
-        if (glm && glm->m_levelManagerDelegate == this) glm->m_levelManagerDelegate = nullptr;
-    }
-
-    void LevelModal::onClose(CCObject* sender) {
-        auto* glm = GameLevelManager::sharedState();
-        if (glm && glm->m_levelManagerDelegate == this) glm->m_levelManagerDelegate = nullptr;
-        Modal::onClose(sender);
-    }
-
-    bool LevelModal::init(std::function<void(LevelRef)> cb) {
-        if (!this->initModal({320.f, 220.f}, "Round Level")) return false;
-        m_cb = std::move(cb);
-        auto* d = label("Enter the level ID everyone will race on.", "chatFont.fnt", .65f, col::dim);
-        d->setPosition({160.f, 176.f});
-        m_mainLayer->addChild(d);
-        m_input = this->addInput({126.f, 146.f}, 180.f, "Level ID", "", "0123456789", 11);
-        this->addButton("Find", "GJ_button_02.png", {262.f, 146.f}, .6f, [this](auto) { this->search(); });
-        m_preview = CCNode::create();
-        m_mainLayer->addChild(m_preview, 3);
-        m_use = this->addButton("Use this level", "GJ_button_01.png", {160.f, 30.f}, .7f, [this](auto) {
-            if (!m_found.valid()) return;
-            auto cb = m_cb;
-            auto found = m_found;
-            this->onClose(nullptr);
-            if (cb) cb(found);
-        });
-        m_use->setVisible(false);
-        return true;
-    }
-
-    void LevelModal::search() {
-        auto text = compat::str(m_input->getString());
-        if (text.empty() || m_searching) return;
-        m_searching = true;
-        m_preview->removeAllChildren();
-        m_use->setVisible(false);
-        auto* wait = label("Searching...", "goldFont.fnt", .5f, col::white);
-        wait->setPosition({160.f, 92.f});
-        m_preview->addChild(wait);
-        auto* glm = GameLevelManager::sharedState();
-        glm->m_levelManagerDelegate = this;
-        glm->getOnlineLevels(GJSearchObject::create(SearchType::Search, text));
-    }
-
-    void LevelModal::showLevel(GJGameLevel* level) {
-        m_searching = false;
-        m_preview->removeAllChildren();
-        if (!level) {
-            auto* l = label("No level with that ID.", "goldFont.fnt", .5f, col::red);
-            l->setPosition({160.f, 92.f});
-            m_preview->addChild(l);
-            return;
-        }
-        m_found = LevelRef {};
-        m_found.id = level->m_levelID.value();
-        m_found.name = compat::str(level->m_levelName);
-        m_found.author = compat::str(level->m_creatorName);
-        m_found.face = faceFor(level);
-
-        auto* plate = Plate::create({280.f, 66.f}, col::navyDeep, .9f, col::gold, .6f, 8.f, 1.2f);
-        plate->setPosition({20.f, 60.f});
-        m_preview->addChild(plate);
-        if (auto* face = difficulty(m_found.face)) {
-            face->setScale(.8f);
-            face->setPosition({52.f, 93.f});
-            m_preview->addChild(face);
-        }
-        auto* name = label(m_found.name, "bigFont.fnt", .5f, col::white);
-        fit(name, 200.f, .5f);
-        name->setAnchorPoint({0.f, .5f});
-        name->setPosition({86.f, 104.f});
-        m_preview->addChild(name);
-        auto* by = label("by " + m_found.author + "   #" + std::to_string(m_found.id), "goldFont.fnt", .42f, col::gold);
-        fit(by, 200.f, .42f);
-        by->setAnchorPoint({0.f, .5f});
-        by->setPosition({86.f, 82.f});
-        m_preview->addChild(by);
-        if (level->isPlatformer()) {
-            auto* warn = label("Platformer: only finishing counts", "chatFont.fnt", .55f, col::red);
-            warn->setPosition({160.f, 52.f});
-            m_preview->addChild(warn);
-        }
-        fx::popIn(m_preview, 1.f, 0.f, .4f);
-        m_use->setVisible(true);
-    }
-
-    void LevelModal::loadLevelsFinished(cocos2d::CCArray* levels, char const*) {
-        GJGameLevel* found = nullptr;
-        if (levels) {
-            for (auto* obj : CCArrayExt<CCObject*>(levels)) {
-                if (auto* l = typeinfo_cast<GJGameLevel*>(obj)) {
-                    found = l;
-                    break;
-                }
-            }
-        }
-        this->showLevel(found);
-    }
-
-    void LevelModal::loadLevelsFinished(cocos2d::CCArray* levels, char const* key, int) {
-        this->loadLevelsFinished(levels, key);
-    }
-
-    void LevelModal::loadLevelsFailed(char const*) {
-        this->showLevel(nullptr);
-    }
-
-    void LevelModal::loadLevelsFailed(char const* key, int) {
-        this->loadLevelsFailed(key);
     }
 }

@@ -180,30 +180,94 @@ def vignette():
     return Image.merge('RGBA', (r.point(lambda v: 4), g.point(lambda v: 6), b.point(lambda v: 18), a))
 
 
-def swords():
-    """two crossed swords, GD-thick outline"""
-    S2 = S
-    def one(angle):
-        img = canvas(48, 48); d = ImageDraw.Draw(img)
-        def P(x, y): return (x * S2, y * S2)
-        # blade
-        d.polygon([P(21.6, 30), P(21.6, 9), P(24, 4.5), P(26.4, 9), P(26.4, 30)], fill=INK)
-        d.polygon([P(22.9, 29), P(22.9, 9.6), P(24, 7.2), P(25.1, 9.6), P(25.1, 29)], fill=(225, 235, 250, 255))
-        d.polygon([P(24, 8), P(25.1, 9.6), P(25.1, 29), P(24, 29)], fill=(160, 175, 205, 255))
-        # guard
-        d.rounded_rectangle([P(16.5, 29), P(31.5, 33.5)], radius=1.6 * S2, fill=INK)
-        d.rounded_rectangle([P(17.8, 30), P(30.2, 32.5)], radius=1 * S2, fill=(255, 200, 60, 255))
-        # grip + pommel
-        d.rectangle([P(22.2, 33), P(25.8, 40.5)], fill=INK)
-        d.rectangle([P(23.2, 33.5), P(24.8, 40)], fill=(130, 78, 34, 255))
-        d.ellipse([P(21, 39.5), P(27, 45.5)], fill=INK)
-        d.ellipse([P(22.2, 40.7), P(25.8, 44.3)], fill=(255, 200, 60, 255))
-        return img.rotate(angle, resample=Image.BICUBIC, center=(24 * S2, 26 * S2))
-    out = one(42)
-    out = Image.alpha_composite(out, one(-42))
-    return out
+def sword_img(scale=1.0):
+    """One sword pointing up, handle at the bottom (16 x 52 pt). Glossy, thick dark outline
+    like Nater's Timer Battles emotes."""
+    W, H = 16, 52
+    img = canvas(W, H); d = ImageDraw.Draw(img)
+    def P(x, y): return (x * S, y * S)
+    ink = INK
+    steel, steelHi, steelLo = (214, 226, 245, 255), (255, 255, 255, 255), (138, 156, 190, 255)
+    gold, goldHi, goldLo = (255, 196, 54, 255), (255, 236, 150, 255), (198, 120, 18, 255)
+    grip, gripLo = (124, 70, 36, 255), (84, 44, 20, 255)
+    # blade (outline, then fill, then a bevel and a shine)
+    d.polygon([P(4.2, 33.5), P(4.2, 7.5), P(8, 1.2), P(11.8, 7.5), P(11.8, 33.5)], fill=ink)
+    d.polygon([P(5.6, 33), P(5.6, 8), P(8, 3.6), P(10.4, 8), P(10.4, 33)], fill=steel)
+    d.polygon([P(8, 4.4), P(10.4, 8.2), P(10.4, 33), P(8, 33)], fill=steelLo)
+    d.polygon([P(6.4, 9), P(7.4, 7), P(7.4, 31.5), P(6.4, 31.5)], fill=steelHi)
+    # fuller (the groove down the middle)
+    d.rectangle([P(7.6, 10), P(8.4, 30)], fill=(112, 128, 168, 255))
+    # crossguard
+    d.rounded_rectangle([P(0.6, 32.2), P(15.4, 37.4)], radius=2.2 * S, fill=ink)
+    d.rounded_rectangle([P(1.9, 33.3), P(14.1, 36.3)], radius=1.4 * S, fill=gold)
+    d.rectangle([P(2.6, 33.6), P(13.4, 34.5)], fill=goldHi)
+    d.rectangle([P(2.6, 35.4), P(13.4, 36.1)], fill=goldLo)
+    d.ellipse([P(6.4, 33.2), P(9.6, 36.4)], fill=(90, 170, 255, 255), outline=ink, width=int(.7 * S))
+    # grip with wraps
+    d.rectangle([P(5.9, 37), P(10.1, 46.6)], fill=ink)
+    d.rectangle([P(7, 37.3), P(9, 46.3)], fill=grip)
+    for y in (39, 41.4, 43.8):
+        d.line([P(7, y), P(9, y + 1.1)], fill=gripLo, width=int(.8 * S))
+    # pommel
+    d.ellipse([P(4.6, 45.2), P(11.4, 51.6)], fill=ink)
+    d.ellipse([P(5.9, 46.4), P(10.1, 50.4)], fill=gold)
+    d.ellipse([P(6.6, 46.9), P(8.2, 48.3)], fill=goldHi)
+    return img
 
-for name, fn in [('swords', swords), ('puff', puff), ('star', star), ('spark', spark), ('ring', ring), ('dot', dot), ('square', square),
+def sword():
+    return sword_img()
+
+def swords():
+    """crossed swords, crossing a third of the way up the blades"""
+    one = sword_img()
+    w, h = one.size
+    side = int(h * 1.15)
+    pivot = (w / 2, 22 * S)  # a point on the blade, in sword-image pixels
+    out = Image.new('RGBA', (side, side), (0, 0, 0, 0))
+    for ang in (40, -40):
+        pad = Image.new('RGBA', (side, side), (0, 0, 0, 0))
+        pad.alpha_composite(one, (int(side / 2 - pivot[0]), int(side / 2 - pivot[1])))
+        out.alpha_composite(pad.rotate(ang, resample=Image.BICUBIC, center=(side / 2, side / 2)))
+    bbox = out.getbbox()
+    return out.crop(bbox)
+
+def slash():
+    """a crescent swoosh for sword swings: thick in the middle, thin at the tips"""
+    img = canvas(48, 48); d = ImageDraw.Draw(img)
+    cx, cy = 24 * S, 30 * S
+    outer, steps = 21 * S, 40
+    pts_out, pts_in = [], []
+    for i in range(steps + 1):
+        t = i / steps
+        a = math.radians(200 + 140 * t)
+        thick = (0.2 + 5.8 * math.sin(math.pi * t)) * S
+        pts_out.append((cx + math.cos(a) * outer, cy + math.sin(a) * outer))
+        pts_in.append((cx + math.cos(a) * (outer - thick), cy + math.sin(a) * (outer - thick)))
+    d.polygon(pts_out + pts_in[::-1], fill=(255, 255, 255, 255))
+    return img.filter(ImageFilter.GaussianBlur(.5 * S))
+
+def badge():
+    """the mod's own main-menu button: navy coin, gold rim, crossed swords"""
+    img = canvas(56, 56); d = ImageDraw.Draw(img)
+    c = 28 * S
+    d.ellipse([c - 27 * S, c - 27 * S, c + 27 * S, c + 27 * S], fill=INK)
+    d.ellipse([c - 25 * S, c - 25 * S, c + 25 * S, c + 25 * S], fill=(255, 196, 54, 255))
+    d.ellipse([c - 21.5 * S, c - 21.5 * S, c + 21.5 * S, c + 21.5 * S], fill=INK)
+    grad = Image.new('RGBA', img.size, (0, 0, 0, 0)); gd = ImageDraw.Draw(grad)
+    for i in range(int(21 * S), 0, -1):
+        t = i / (21 * S)
+        col = (int(30 + 40 * (1 - t)), int(46 + 60 * (1 - t)), int(110 + 80 * (1 - t)), 255)
+        gd.ellipse([c - i, c - i - 1.5 * S * (1 - t), c + i, c + i - 1.5 * S * (1 - t)], fill=col)
+    img.alpha_composite(grad)
+    d = ImageDraw.Draw(img)
+    d.arc([c - 23.3 * S, c - 23.3 * S, c + 23.3 * S, c + 23.3 * S], start=200, end=320, fill=(255, 240, 170, 255), width=int(1.4 * S))
+    sw = swords()
+    k = (34 * S) / max(sw.size)
+    sw = sw.resize((int(sw.width * k), int(sw.height * k)), Image.LANCZOS)
+    img.alpha_composite(sw, ((img.width - sw.width) // 2, (img.height - sw.height) // 2 + int(.5 * S)))
+    return img
+
+for name, fn in [('sword', sword), ('swords', swords), ('slash', slash), ('badge', badge), ('puff', puff), ('star', star), ('spark', spark), ('ring', ring), ('dot', dot), ('square', square),
                  ('glow', glow), ('shadow', shadow), ('rays', rays), ('bubble', bubble), ('trophy', trophy),
                  ('crown', crown), ('check', check), ('cross', cross), ('vignette', vignette)]:
     save(name, fn())

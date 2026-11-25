@@ -11,6 +11,13 @@
 #endif
 
 namespace nt::compat {
+    // the string type GD's own virtual functions take (needed to override them)
+#if NT_GD_2209
+    using GdStr = std::string;
+#else
+    using GdStr = gd::string;
+#endif
+
     inline cocos2d::CCScene* playScene(GJGameLevel* level) {
     #if NT_GD_2209
         return PlayLayer::scene(level, false);

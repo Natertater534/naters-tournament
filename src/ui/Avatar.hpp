@@ -29,7 +29,13 @@ namespace nt::ui {
         bool dimmed() const { return m_dimmed; }
         void setYou(bool you);
         void setIdle(bool idle);
+        // the little random hops and waves an idle avatar does on its own (off for players
+        // who walk around themselves, so it only ever moves the way they move it)
+        void setAutoHop(bool on) { m_autoHop = on; }
         void setScaleSmooth(float scale, float time);
+        // a little stepping bounce while walking around the lobby
+        void setWalking(bool walking, int dir = 0);
+        bool onGround() const;
 
         // poof in the sky, fall, land with a squash, then wave hello
         void dropIn(float fromHeight, float delay, std::function<void()> done = nullptr);
@@ -45,6 +51,23 @@ namespace nt::ui {
         void knockOut();
         // happy little double hop
         void celebrate();
+
+        // --- the sword (bracket duels). Angles: 0 = pointing up, positive = forward.
+        static constexpr float kSwordRest = 32.f;
+        void setSword(bool on, int facing);
+        // the sword appears in the hand with a flourish (when the bracket is set)
+        void swordDraw(int facing, float delay = 0.f);
+        // struck by a blow: rock back, squash, then settle
+        void flinch();
+        bool hasSword() const { return m_sword != nullptr; }
+        int facing() const { return m_facing; }
+        void setFacing(int facing);
+        void setSwordAngle(float deg);
+        void swordTo(float deg, float time);
+        void swordDrop();
+        void swordRaise();
+        CCPoint handWorld();
+        CCPoint swordTipWorld();
 
         bool busy = false;  // the stage won't move it while it performs
 
@@ -64,9 +87,15 @@ namespace nt::ui {
         CCNode* m_bubble = nullptr;
         CCSprite* m_ring = nullptr;
         CCSprite* m_mark = nullptr;
+        CCNode* m_hand = nullptr;
+        CCSprite* m_sword = nullptr;
+        int m_facing = 1;
         bool m_dimmed = false;
         bool m_idle = false;
         bool m_you = false;
+        bool m_walking = false;
+        int m_walkDir = 0;
+        bool m_autoHop = true;
         float m_nameScale = .3f;
     };
 }

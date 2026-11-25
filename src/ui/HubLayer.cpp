@@ -47,17 +47,19 @@ namespace nt::ui {
         fit(title, win.width - 140.f, .95f);
         titleRoot->addChild(title);
         float tw = title->getScaledContentSize().width;
+        // a sword either side of the title, tips out, rocking like they're being brandished
         for (int side : {-1, 1}) {
-            auto* sw = CCSprite::createWithSpriteFrameName("GJ_versusBtn_001.png");
-            if (!sw) sw = fx("swords");
-            float h = std::max(sw->getContentSize().width, sw->getContentSize().height);
-            sw->setScale(h > 0.f ? 30.f / h : 1.f);
-            sw->setPosition({side * (tw / 2.f + 24.f), 1.f});
-            sw->setFlipX(side > 0);
+            auto* sw = fx("sword");
+            float h = sw->getContentSize().height;
+            sw->setScale(h > 0.f ? 34.f / h : 1.f);
+            sw->setAnchorPoint({.5f, .21f});
+            sw->setPosition({side * (tw / 2.f + 22.f), -10.f});
+            sw->setFlipX(side < 0);
+            sw->setRotation(side * 28.f);
             titleRoot->addChild(sw);
             sw->runAction(CCRepeatForever::create(CCSequence::create(
-                CCEaseSineInOut::create(CCRotateTo::create(1.2f, side * 8.f)),
-                CCEaseSineInOut::create(CCRotateTo::create(1.2f, -side * 4.f)), nullptr)));
+                CCEaseSineInOut::create(CCRotateTo::create(1.2f, side * 36.f)),
+                CCEaseSineInOut::create(CCRotateTo::create(1.2f, side * 22.f)), nullptr)));
         }
         titleRoot->runAction(CCRepeatForever::create(CCSequence::create(
             CCEaseSineInOut::create(CCMoveBy::create(1.6f, {0.f, 3.f})),
@@ -358,6 +360,7 @@ namespace nt::ui {
             {"max", set.max},
             {"time", set.time},
             {"play", set.play},
+            {"pool", set.pool},
         });
         bool plays = set.play;
         api::call(m_actionReq, "nt_create", withAuth(args), [this, plays](api::Reply reply) {

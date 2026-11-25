@@ -792,15 +792,27 @@ begin
     end loop;
 
   elsif act = 'level' then
+    if t.state not in ('lobby', 'running') then return jsonb_build_object('error', 'state'); end if;
+    -- the level is rolled for one round: the one about to start
+    if t.state = 'lobby' then
+      nr := 1;
+    elsif exists (select 1 from nt.matches where tournament_id = t.id and round = t.round and state = 'pending'
+                    and (p1 is not null or p2 is not null)) then
+      nr := t.round;
+    else
+      nr := t.round + 1;
+    end if;
     update nt.tournaments
        set level_id = nt.clampi(a -> 'level_id', 1, 2147483647, 1),
            level_name = nt.clean(a ->> 'level_name', 40),
            level_author = nt.clean(a ->> 'level_author', 20),
            level_diff = nt.clampi(a -> 'level_diff', 0, 20, 0),
+           level_round = nr,
            rev = rev + 1, last_activity = now()
      where id = t.id;
     perform nt.event(t.id, 'level', null, jsonb_build_object(
-      'id', nt.clampi(a -> 'level_id', 1, 2147483647, 1), 'name', nt.clean(a ->> 'level_name', 40)));
+      'id', nt.clampi(a -> 'level_id', 1, 2147483647, 1), 'name', nt.clean(a ->> 'level_name', 40),
+      'author', nt.clean(a ->> 'level_author', 20), 'diff', nt.clampi(a -> 'level_diff', 0, 20, 0), 'r', nr));
 
   elsif act = 'round' then
     if t.state <> 'running' then return jsonb_build_object('error', 'state'); end if;
@@ -817,6 +829,7 @@ begin
     else
       return jsonb_build_object('error', 'state');
     end if;
+    if t.level_round <> nr then return jsonb_build_object('error', 'level'); end if;
     update nt.tournaments set round = nr where id = t.id;
     started := nt.start_round(t.id, nr);
     perform nt.bump(t.id);
@@ -880,3 +893,170 @@ revoke all on function public.nt_list(jsonb), public.nt_create(jsonb), public.nt
 grant execute on function public.nt_list(jsonb), public.nt_create(jsonb), public.nt_join(jsonb),
   public.nt_leave(jsonb), public.nt_state(jsonb), public.nt_progress(jsonb),
   public.nt_emote(jsonb), public.nt_host(jsonb) to anon;
+
+-- ---------------------------------------------------------------- v2: level pools, one roll per round, lobby movement
+
+alter table nt.tournaments add column if not exists pool integer not null default 96;
+alter table nt.tournaments add column if not exists level_round integer not null default 0;
+alter table nt.players add column if not exists lobby_x real;
+alter table nt.players add column if not exists lobby_j integer not null default 0;
+alter table nt.players add column if not exists lobby_at timestamptz;
+
+create or replace function nt.tjson(t nt.tournaments) returns jsonb
+language sql stable set search_path = '' as $$
+  select jsonb_build_object(
+    'code', t.code, 'name', t.name, 'pub', t.is_public, 'gd', t.gd,
+    'host', t.host_account, 'hostName', t.host_name, 'state', t.state,
+    'max', t.max_players, 'round', t.round, 'rounds', t.rounds, 'size', t.size,
+    'time', t.time_limit, 'champ', t.champion, 'rev', t.rev, 'pool', t.pool, 'levelRound', t.level_round,
+    'level', case when t.level_id is null then null else jsonb_build_object(
+      'id', t.level_id, 'name', t.level_name, 'author', t.level_author, 'diff', t.level_diff) end,
+    'count', (select count(*) from nt.players p where p.tournament_id = t.id and p.status <> 'kicked' and p.status <> 'left')
+  )
+$$;
+
+create or replace function nt.state_json(t nt.tournaments, since bigint, rev bigint) returns jsonb
+language plpgsql stable set search_path = '' as $$
+declare
+  out jsonb;
+  last_ev bigint;
+begin
+  out := jsonb_build_object('now', nt.ms(now()), 't', nt.tjson(t));
+
+  if rev is distinct from t.rev then
+    out := out || jsonb_build_object(
+      'players', coalesce((select jsonb_agg(jsonb_build_object(
+          'a', p.account_id, 'u', p.user_id, 'n', p.name, 'i', p.icon, 'seed', p.seed,
+          'st', p.status, 'w', p.wins, 'b', p.best) order by p.joined_at)
+        from nt.players p where p.tournament_id = t.id and p.status <> 'kicked'), '[]'::jsonb),
+      'matches', coalesce((select jsonb_agg(jsonb_build_object(
+          'r', m.round, 's', m.slot, 'p1', m.p1, 'p2', m.p2, 'st', m.state,
+          'lv', m.level_id, 'ln', m.level_name, 'sa', nt.ms(m.starts_at), 'ea', nt.ms(m.ends_at),
+          'w', m.winner, 'why', m.reason,
+          'b1', m.p1_best, 'b2', m.p2_best, 'a1', m.p1_att, 'a2', m.p2_att) order by m.round, m.slot)
+        from nt.matches m where m.tournament_id = t.id), '[]'::jsonb));
+  end if;
+
+  if t.state = 'running' then
+    out := out || jsonb_build_object('live', coalesce((select jsonb_agg(jsonb_build_array(
+        m.round, m.slot, m.p1_best, m.p2_best, m.p1_cur, m.p2_cur, m.p1_att, m.p2_att))
+      from nt.matches m where m.tournament_id = t.id and m.state = 'live'), '[]'::jsonb));
+  elsif t.state = 'lobby' then
+    -- where everyone is standing in the lobby (x in 0..1000) and how many times they've jumped
+    out := out || jsonb_build_object('pos', coalesce((select jsonb_agg(jsonb_build_array(
+        p.account_id, round(p.lobby_x * 1000)::integer, p.lobby_j))
+      from nt.players p where p.tournament_id = t.id and p.status = 'in' and p.lobby_x is not null), '[]'::jsonb));
+  end if;
+
+  select max(e.id) into last_ev from nt.events e where e.tournament_id = t.id;
+  if since is null or since < 0 then
+    out := out || jsonb_build_object('ev', '[]'::jsonb, 'evLast', coalesce(last_ev, 0));
+  else
+    out := out || jsonb_build_object('ev', coalesce((select jsonb_agg(x.j order by x.id) from (
+        select e.id, jsonb_build_object('id', e.id, 'k', e.kind, 'a', e.account_id, 'd', e.data,
+               't', nt.ms(e.created_at)) as j
+          from nt.events e where e.tournament_id = t.id and e.id > since order by e.id limit 60) x),
+        '[]'::jsonb),
+      'evLast', coalesce(last_ev, 0));
+  end if;
+  return out;
+end $$;
+
+-- practice bots wander the lobby and hop now and then
+create or replace function nt.bot_wander(tid uuid) returns void
+language sql volatile set search_path = '' as $$
+  update nt.players
+     set lobby_x = greatest(0.03, least(0.97, coalesce(lobby_x, 0.1 + random() * 0.8) + (random() - 0.5) * 0.22)),
+         lobby_j = lobby_j + case when random() < 0.3 then 1 else 0 end,
+         lobby_at = now()
+   where tournament_id = tid and account_id < 0 and status = 'in'
+     and (lobby_at is null or lobby_at < now() - interval '1.4 seconds')
+     and random() < 0.6
+$$;
+
+create or replace function public.nt_state(a jsonb) returns jsonb
+language plpgsql volatile security definer set search_path = '' as $$
+declare
+  t nt.tournaments;
+  acc integer := nt.clampi(a -> 'account_id', 0, 2147483647, 0);
+begin
+  select * into t from nt.tournaments where code = upper(nt.clean(a ->> 'code', 8));
+  if not found or t.state = 'closed' then return jsonb_build_object('error', 'notfound'); end if;
+
+  if t.state = 'running' then
+    perform nt.upkeep(t.id);
+    select * into t from nt.tournaments where id = t.id;
+  elsif t.state = 'lobby' then
+    perform nt.bot_wander(t.id);
+  end if;
+
+  if acc > 0 then
+    update nt.players set last_seen = now()
+     where tournament_id = t.id and account_id = acc and secret_hash = nt.hash(a ->> 'secret')
+       and last_seen < now() - interval '10 seconds';
+  end if;
+
+  return nt.state_json(t,
+    case when a ? 'since' then nt.clampi(a -> 'since', -1, 2147483647, -1)::bigint else -1 end,
+    case when a ? 'rev' then (a ->> 'rev')::bigint else null end);
+end $$;
+
+create or replace function public.nt_move(a jsonb) returns jsonb
+language plpgsql volatile security definer set search_path = '' as $$
+declare
+  t nt.tournaments;
+  p nt.players;
+begin
+  select * into t from nt.tournaments where code = upper(nt.clean(a ->> 'code', 8));
+  if not found then return jsonb_build_object('error', 'notfound'); end if;
+  if t.state <> 'lobby' then return jsonb_build_object('ok', false); end if;
+  p := nt.auth(t.id, a);
+  if p.account_id is null then return jsonb_build_object('error', 'auth'); end if;
+  update nt.players
+     set lobby_x = nt.clampf(a -> 'x', 0, 1),
+         lobby_j = greatest(lobby_j, nt.clampi(a -> 'j', 0, 1000000, 0)),
+         lobby_at = now()
+   where tournament_id = t.id and account_id = p.account_id;
+  return jsonb_build_object('ok', true);
+end $$;
+
+create or replace function public.nt_create(a jsonb) returns jsonb
+language plpgsql volatile security definer set search_path = '' as $$
+declare
+  acc integer := nt.clampi(a -> 'account_id', 0, 2147483647, 0);
+  uname text := nt.clean(a ->> 'username', 20);
+  tname text := nt.clean(a ->> 'name', 32);
+  sec text := coalesce(a ->> 'secret', '');
+  gdv text := nt.clean(a ->> 'gd', 10);
+  t nt.tournaments;
+begin
+  if acc <= 0 or uname = '' then return jsonb_build_object('error', 'account'); end if;
+  if length(sec) < 16 then return jsonb_build_object('error', 'secret'); end if;
+  if gdv not in ('2.2081', '2.2091') then return jsonb_build_object('error', 'version'); end if;
+  if tname = '' then tname := uname || '''s Tournament'; end if;
+  if (select count(*) from nt.tournaments
+       where host_account = acc and state in ('lobby', 'running')
+         and last_activity > now() - interval '6 hours') >= 3 then
+    return jsonb_build_object('error', 'limit');
+  end if;
+
+  insert into nt.tournaments (code, name, is_public, gd, host_account, host_name, host_hash,
+                              max_players, time_limit, pool)
+  values (nt.new_code(), tname, coalesce((a ->> 'public')::boolean, true), gdv, acc, uname, nt.hash(sec),
+          nt.clampi(a -> 'max', 2, 32, 16), nt.clampi(a -> 'time', 30, 3600, 300), nt.clampi(a -> 'pool', 1, 1023, 96))
+  returning * into t;
+  perform nt.event(t.id, 'created', acc, '{}'::jsonb);
+
+  if coalesce((a ->> 'play')::boolean, true) then
+    insert into nt.players (tournament_id, account_id, user_id, name, icon, secret_hash)
+    values (t.id, acc, nt.clampi(a -> 'user_id', 0, 2147483647, 0), uname, nt.icon(a -> 'icon'), nt.hash(sec));
+    perform nt.event(t.id, 'join', acc, jsonb_build_object('n', uname, 'i', nt.icon(a -> 'icon')));
+    perform nt.bump(t.id);
+    select * into t from nt.tournaments where id = t.id;
+  end if;
+  return jsonb_build_object('code', t.code) || nt.state_json(t, -1, null);
+end $$;
+
+revoke all on function nt.bot_wander(uuid) from public, anon, authenticated;
+revoke all on function public.nt_move(jsonb) from public, authenticated;
+grant execute on function public.nt_move(jsonb) to anon;

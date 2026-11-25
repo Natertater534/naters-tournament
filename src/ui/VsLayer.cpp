@@ -160,19 +160,21 @@ namespace nt::ui {
 
     void VsLayer::intro() {
         auto win = CCDirector::get()->getWinSize();
-        auto land = [this](Avatar* a) {
+        auto land = [this](Avatar* a, int facing) {
             a->squash(1.f);
             fx::dust(this, a->getPosition(), 1.4f, 2);
             fx::play("land");
+            // each draws a sword, facing the other
+            a->swordDraw(facing, .1f);
         };
         m_left->runAction(CCSequence::create(
             CCDelayTime::create(.25f),
             CCEaseOut::create(CCJumpTo::create(.5f, {win.width * .24f, win.height * .42f}, 60.f, 1), 1.3f),
-            CallFuncExt::create([this, land] { land(m_left); }), nullptr));
+            CallFuncExt::create([this, land] { land(m_left, 1); }), nullptr));
         m_right->runAction(CCSequence::create(
             CCDelayTime::create(.4f),
             CCEaseOut::create(CCJumpTo::create(.5f, {win.width * .76f, win.height * .42f}, 60.f, 1), 1.3f),
-            CallFuncExt::create([this, land] { land(m_right); }), nullptr));
+            CallFuncExt::create([this, land] { land(m_right, -1); }), nullptr));
         fx::play("whoosh");
 
         // VS slam
@@ -180,8 +182,7 @@ namespace nt::ui {
             CCDelayTime::create(1.0f),
             CallFuncExt::create([this, win] {
                 auto centre = ccp(win.width / 2.f, win.height * .5f);
-                auto* swords = CCSprite::createWithSpriteFrameName("GJ_versusBtn_001.png");
-                if (!swords) swords = fx("swords");
+                auto* swords = fx("swords");
                 float h = std::max(swords->getContentSize().width, swords->getContentSize().height);
                 float target = h > 0.f ? 92.f / h : 1.f;
                 swords->setPosition(centre);
@@ -204,10 +205,20 @@ namespace nt::ui {
             CCDelayTime::create(.18f),
             CallFuncExt::create([this, win] {
                 fx::play("hit");
+                fx::play("clang", .7f);
                 fx::screenFlash(this, col::white, .7f, .35f);
                 fx::shake(this, 7.f, .35f);
                 fx::sparks(this, {win.width / 2.f, win.height * .5f}, 16, col::goldLight, 50.f, 12);
                 fx::ring(this, {win.width / 2.f, win.height * .5f}, col::gold, 2.2f, .5f, 12);
+                // both point their blades across at each other: a challenge
+                for (Avatar* a : {m_left, m_right}) {
+                    a->runAction(CCSequence::create(
+                        CallFuncExt::create([a] { a->swordTo(-40.f, .12f); }),
+                        CCDelayTime::create(.12f),
+                        CallFuncExt::create([a] { a->swordTo(78.f, .16f); }),
+                        CCDelayTime::create(1.1f),
+                        CallFuncExt::create([a] { a->swordTo(Avatar::kSwordRest, .4f); }), nullptr));
+                }
             }),
             nullptr));
     }
