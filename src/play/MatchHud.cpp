@@ -148,7 +148,7 @@ namespace nt::play {
         m_lastSecond = left;
 
         for (int id : mc->takeOpponentEmotes()) {
-            if (m_bubble) m_bubble->removeFromParent();
+            if (auto old = m_bubble.lock()) old->removeFromParent();
             auto* b = CCNode::create();
             auto* bg = ui::fx("bubble");
             bg->setAnchorPoint({.5f, 0.f});
@@ -160,13 +160,13 @@ namespace nt::play {
             b->addChild(e, 1);
             b->setPosition({m_opp->getPositionX(), 20.f});
             m_root->addChild(b, 10);
-            m_bubble = b;
+            m_bubble = WeakRef<CCNode>(b);
             fx::popIn(b, 1.f, 0.f, .4f);
             b->runAction(CCSequence::create(CCDelayTime::create(2.f), CCEaseBackIn::create(CCScaleTo::create(.2f, 0.f)),
                                             CCRemoveSelf::create(), nullptr));
             fx::play("boop");
         }
-        if (m_bubble && m_bubble->getParent()) m_bubble->setPositionX(m_opp->getPositionX());
+        if (auto b = m_bubble.lock(); b && b->getParent()) b->setPositionX(m_opp->getPositionX());
 
         if (auto* pl = PlayLayer::get()) {
             bool practice = pl->m_isPracticeMode;

@@ -29,7 +29,8 @@ namespace nt::play {
         CCLabelBMFont* m_oppInfo = nullptr;
         CCLabelBMFont* m_clock = nullptr;
         CCLabelBMFont* m_note = nullptr;
-        CCNode* m_bubble = nullptr;
+        // the opponent's emote bubble; it removes itself, so only ever reach it through this
+        geode::WeakRef<CCNode> m_bubble;
         float m_trackW = 220.f;
         float m_oppShown = 0.f;
         float m_myShown = 0.f;

@@ -65,6 +65,7 @@ create table if not exists nt.matches (
   state       text not null default 'pending' check (state in ('pending', 'live', 'done')),
   level_id    bigint,
   level_name  text,
+  level_diff  integer,
   starts_at   timestamptz,
   ends_at     timestamptz,
   p1_best     real not null default 0,
@@ -270,52 +271,98 @@ end $$;
 -- Practice bots: the host can fill a lobby with bots (negative account ids) so the whole
 -- flow can be tried, or shown off, without a second real player. Nobody can sign in as a bot.
 
+alter table nt.matches add column if not exists level_diff integer;
+
 create or replace function nt.bot_side(tid uuid, r integer, s integer, which integer) returns void
 language plpgsql volatile set search_path = '' as $$
+-- A practice bot plays like a person would on this level: runs end in deaths that get rarer
+-- with practice, and somewhere in a hard level there's a part that stops them (each bot has
+-- its own, from its skill), which they only now and then get past. On an Easy Demon they
+-- usually reach 30-40% in three minutes; Extreme Demons stop them in the first 10%.
 declare
   m nt.matches;
+  bot integer;
   seen timestamptz;
   cur real;
   best real;
   att integer;
   dt double precision;
+  face integer;
+  hz0 double precision;    -- chance to die per 1% of the level, before practice and skill
+  wall0 double precision;  -- where a typical player gets stopped (0 = nowhere)
+  skill double precision;
+  luck double precision;
+  wall double precision;
+  k integer := 0;
+  hz double precision;
+  dist double precision;
+  nxt double precision;
+  died boolean := false;
+  died_at double precision := 0;
   c real;
   b real;
   a integer;
-  died boolean;
 begin
   select * into m from nt.matches where tournament_id = tid and round = r and slot = s;
   if not found or m.state <> 'live' or now() < m.starts_at then return; end if;
-  if which = 1 then seen := m.p1_seen; cur := m.p1_cur; best := m.p1_best; att := m.p1_att;
-  else seen := m.p2_seen; cur := m.p2_cur; best := m.p2_best; att := m.p2_att; end if;
+  if which = 1 then bot := m.p1; seen := m.p1_seen; cur := m.p1_cur; best := m.p1_best; att := m.p1_att;
+  else bot := m.p2; seen := m.p2_seen; cur := m.p2_cur; best := m.p2_best; att := m.p2_att; end if;
   dt := extract(epoch from (now() - coalesce(seen, m.starts_at)));
   if dt < 0.45 then return; end if;
   dt := least(dt, 5);
-  -- run forward at roughly a player's pace; die now and then (runs average ~15 s)
-  c := cur + dt * (0.9 + random() * 1.5);
-  died := random() < least(0.9, dt * 0.065);
-  b := greatest(best, least(c, 100));
+
+  face := coalesce(m.level_diff, 8) - 1;  -- level_diff is the difficulty face + 1
+  select x.h, x.w into hz0, wall0 from (values
+      (1, .002, 0), (2, .0035, 0), (3, .005, 0), (4, .008, 95), (5, .012, 75),
+      (7, .04, 36), (8, .05, 27), (6, .06, 19), (9, .07, 12), (10, .09, 6)) as x(f, h, w)
+   where x.f = greatest(face, 1);
+  if hz0 is null then hz0 := .005; wall0 := 0; end if;
+  -- each bot is its own player: steady for the whole tournament, and luckier on some levels
+  skill := 0.7 + 0.6 * (abs(hashtext(tid::text || ':' || bot::text)) % 1000) / 1000.0;
+  luck := 0.75 + 0.5 * (abs(hashtext(coalesce(m.level_id, 0)::text || ':' || bot::text)) % 1000) / 1000.0;
+  -- the part that stops them; once they're past one, the next comes a little further on
+  wall := case when wall0 > 0 then greatest(2.5, wall0 * skill * luck) else 101 end;
+  while wall < 100 and wall <= best and k < 40 loop
+    wall := wall + (4 + 6 * (abs(hashtext(bot::text || ':' || k::text || ':' || coalesce(m.level_id, 0)::text)) % 1000) / 1000.0) * skill;
+    k := k + 1;
+  end loop;
+
+  hz := hz0 * greatest(0.35, power(0.92, greatest(att, 1) - 1)) / skill;
+  dist := dt * 1.2 * (0.85 + random() * 0.3);
+  nxt := cur + dist;
+  if random() < 1 - exp(-hz * dist) then
+    died := true;
+    died_at := cur + random() * dist;
+  end if;
+  if not died and wall < 100 and cur < wall and wall <= nxt
+     and random() >= (case when face >= 6 then 0.025 else 0.05 end) * skill then
+    died := true;
+    died_at := greatest(cur, wall - random() * 1.5);
+  end if;
+
   if died then
-    a := att + 1;
+    b := greatest(best, least(greatest(died_at, 0.5), 99.5));
+    a := greatest(att, 1) + 1;
     c := 0;
   else
+    c := least(nxt, 100);
+    b := greatest(best, c);
     a := greatest(att, 1);
   end if;
   if which = 1 then
-    update nt.matches set p1_cur = least(c, 100), p1_best = b, p1_att = a, p1_seen = now(),
+    update nt.matches set p1_cur = c, p1_best = b, p1_att = a, p1_seen = now(),
            p1_best_at = case when b > m.p1_best then now() else p1_best_at end
      where tournament_id = tid and round = r and slot = s;
   else
-    update nt.matches set p2_cur = least(c, 100), p2_best = b, p2_att = a, p2_seen = now(),
+    update nt.matches set p2_cur = c, p2_best = b, p2_att = a, p2_seen = now(),
            p2_best_at = case when b > m.p2_best then now() else p2_best_at end
      where tournament_id = tid and round = r and slot = s;
   end if;
   if random() < dt * 0.015 then
-    perform nt.event(tid, 'emote', case when which = 1 then m.p1 else m.p2 end,
-                     jsonb_build_object('e', 1 + floor(random() * 15)::integer));
+    perform nt.event(tid, 'emote', bot, jsonb_build_object('e', 1 + floor(random() * 15)::integer));
   end if;
   if c >= 100 then
-    perform nt.finish(tid, r, s, case when which = 1 then m.p1 else m.p2 end, 'complete');
+    perform nt.finish(tid, r, s, bot, 'complete');
   end if;
 end $$;
 
@@ -413,7 +460,7 @@ begin
     ok2 := m.p2 is not null and coalesce(st2, 'left') not in ('left', 'kicked');
     if ok1 and ok2 then
       update nt.matches
-         set state = 'live', level_id = t.level_id, level_name = t.level_name,
+         set state = 'live', level_id = t.level_id, level_name = t.level_name, level_diff = t.level_diff,
              starts_at = t0, ends_at = t0 + make_interval(secs => t.time_limit),
              p1_best = 0, p2_best = 0, p1_cur = 0, p2_cur = 0, p1_att = 0, p2_att = 0,
              p1_best_at = null, p2_best_at = null, p1_seen = null, p2_seen = null
