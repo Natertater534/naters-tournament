@@ -14,11 +14,12 @@ namespace nt::ui {
 
     class TournamentLayer : public CCLayer {
     public:
-        static CCScene* scene(std::string const& code);
-        static TournamentLayer* create(std::string const& code);
+        // justJoined: play our own drop-in when the screen first loads
+        static CCScene* scene(std::string const& code, bool justJoined = false);
+        static TournamentLayer* create(std::string const& code, bool justJoined = false);
 
     protected:
-        bool init(std::string const& code);
+        bool init(std::string const& code, bool justJoined);
         void onEnterTransitionDidFinish() override;
         void keyBackClicked() override;
         void registerWithTouchDispatcher() override;
@@ -43,6 +44,7 @@ namespace nt::ui {
         std::string m_code;
         State m_state;
         bool m_loaded = false;
+        bool m_justJoined = false;
         bool m_busy = false;
         int m_me = 0;
         float m_pollTimer = 0.f;

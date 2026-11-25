@@ -318,11 +318,11 @@ namespace nt::ui {
         }
     }
 
-    void HubLayer::open(std::string const& code) {
+    void HubLayer::open(std::string const& code, bool justJoined) {
         if (m_leaving) return;
         m_leaving = true;
         fx::play("pop");
-        CCDirector::get()->pushScene(CCTransitionFade::create(.4f, TournamentLayer::scene(code)));
+        CCDirector::get()->pushScene(CCTransitionFade::create(.4f, TournamentLayer::scene(code, justJoined)));
     }
 
     void HubLayer::joinCode(std::string code) {
@@ -347,7 +347,7 @@ namespace nt::ui {
                 FLAlertLayer::create("Can't join", api::describe(err), "OK")->show();
                 return;
             }
-            this->open(code);
+            this->open(code, true);
         });
     }
 
@@ -359,14 +359,15 @@ namespace nt::ui {
             {"time", set.time},
             {"play", set.play},
         });
-        api::call(m_actionReq, "nt_create", withAuth(args), [this](api::Reply reply) {
+        bool plays = set.play;
+        api::call(m_actionReq, "nt_create", withAuth(args), [this, plays](api::Reply reply) {
             if (reply.isErr()) {
                 FLAlertLayer::create("Can't create", api::describe(reply.unwrapErr()), "OK")->show();
                 return;
             }
             auto code = jstr(reply.unwrap(), "code");
             if (code.empty()) return;
-            this->open(code);
+            this->open(code, plays);
         });
     }
 }

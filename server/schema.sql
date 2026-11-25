@@ -267,7 +267,72 @@ begin
   return case when random() < 0.5 then m.p1 else m.p2 end;
 end $$;
 
--- Lazy upkeep, run on reads: ends timed-out matches and no-shows.
+-- Practice bots: the host can fill a lobby with bots (negative account ids) so the whole
+-- flow can be tried, or shown off, without a second real player. Nobody can sign in as a bot.
+
+create or replace function nt.bot_side(tid uuid, r integer, s integer, which integer) returns void
+language plpgsql volatile set search_path = '' as $$
+declare
+  m nt.matches;
+  seen timestamptz;
+  cur real;
+  best real;
+  att integer;
+  dt double precision;
+  c real;
+  b real;
+  a integer;
+  died boolean;
+begin
+  select * into m from nt.matches where tournament_id = tid and round = r and slot = s;
+  if not found or m.state <> 'live' or now() < m.starts_at then return; end if;
+  if which = 1 then seen := m.p1_seen; cur := m.p1_cur; best := m.p1_best; att := m.p1_att;
+  else seen := m.p2_seen; cur := m.p2_cur; best := m.p2_best; att := m.p2_att; end if;
+  dt := extract(epoch from (now() - coalesce(seen, m.starts_at)));
+  if dt < 0.45 then return; end if;
+  dt := least(dt, 5);
+  -- run forward at roughly a player's pace; die now and then (runs average ~15 s)
+  c := cur + dt * (0.9 + random() * 1.5);
+  died := random() < least(0.9, dt * 0.065);
+  b := greatest(best, least(c, 100));
+  if died then
+    a := att + 1;
+    c := 0;
+  else
+    a := greatest(att, 1);
+  end if;
+  if which = 1 then
+    update nt.matches set p1_cur = least(c, 100), p1_best = b, p1_att = a, p1_seen = now(),
+           p1_best_at = case when b > m.p1_best then now() else p1_best_at end
+     where tournament_id = tid and round = r and slot = s;
+  else
+    update nt.matches set p2_cur = least(c, 100), p2_best = b, p2_att = a, p2_seen = now(),
+           p2_best_at = case when b > m.p2_best then now() else p2_best_at end
+     where tournament_id = tid and round = r and slot = s;
+  end if;
+  if random() < dt * 0.015 then
+    perform nt.event(tid, 'emote', case when which = 1 then m.p1 else m.p2 end,
+                     jsonb_build_object('e', 1 + floor(random() * 15)::integer));
+  end if;
+  if c >= 100 then
+    perform nt.finish(tid, r, s, case when which = 1 then m.p1 else m.p2 end, 'complete');
+  end if;
+end $$;
+
+create or replace function nt.bot_step(tid uuid) returns void
+language plpgsql volatile set search_path = '' as $$
+declare
+  m nt.matches;
+begin
+  for m in select * from nt.matches
+            where tournament_id = tid and state = 'live' and now() >= starts_at and (p1 < 0 or p2 < 0) loop
+    perform 1 from nt.tournaments where id = tid for update;
+    if m.p1 < 0 then perform nt.bot_side(tid, m.round, m.slot, 1); end if;
+    if m.p2 < 0 then perform nt.bot_side(tid, m.round, m.slot, 2); end if;
+  end loop;
+end $$;
+
+-- Lazy upkeep, run on reads: moves practice bots, ends timed-out matches and no-shows.
 -- Lock order everywhere: tournament row first, then match rows (no deadlocks).
 create or replace function nt.upkeep(tid uuid) returns void
 language plpgsql volatile set search_path = '' as $$
@@ -276,6 +341,7 @@ declare
   gone1 boolean;
   gone2 boolean;
 begin
+  perform nt.bot_step(tid);
   if not exists (select 1 from nt.matches
                   where tournament_id = tid and state = 'live'
                     and (now() > ends_at + interval '3 seconds' or now() > starts_at + interval '50 seconds')) then
@@ -290,8 +356,8 @@ begin
     if now() > m.ends_at + interval '3 seconds' then
       perform nt.finish(tid, m.round, m.slot, nt.decide(m), 'time');
     else
-      gone1 := m.p1_seen is null or m.p1_seen < now() - interval '45 seconds';
-      gone2 := m.p2_seen is null or m.p2_seen < now() - interval '45 seconds';
+      gone1 := m.p1 > 0 and (m.p1_seen is null or m.p1_seen < now() - interval '45 seconds');
+      gone2 := m.p2 > 0 and (m.p2_seen is null or m.p2_seen < now() - interval '45 seconds');
       if gone1 and not gone2 then
         perform nt.finish(tid, m.round, m.slot, m.p2, 'forfeit');
       elsif gone2 and not gone1 then
@@ -299,6 +365,31 @@ begin
       end if;
     end if;
   end loop;
+end $$;
+
+create or replace function nt.add_bots(tid uuid, k integer) returns integer
+language plpgsql volatile set search_path = '' as $$
+declare
+  names constant text[] := array['Viper','Zephyr','Nova','Blitz','Comet','Pixel','Rocket','Ember','Frost','Glitch',
+    'Turbo','Echo','Bolt','Shadow','Spark','Drift','Orbit','Quasar','Raptor','Sonic','Titan','Vortex','Wisp','Yeti',
+    'Zen','Ace','Bee','Cosmo','Dash','Flux','Gizmo','Hex'];
+  bid integer;
+  nm text;
+  ic jsonb;
+  added integer := 0;
+begin
+  for i in 1..k loop
+    select coalesce(min(account_id), 0) - 1 into bid from nt.players where tournament_id = tid and account_id < 0;
+    nm := 'Bot ' || names[1 + floor(random() * array_length(names, 1))::integer];
+    ic := jsonb_build_object('c', 1 + floor(random() * 120)::integer, 'p', floor(random() * 42)::integer,
+                             's', floor(random() * 42)::integer,
+                             'g', case when random() < .35 then floor(random() * 42)::integer else -1 end);
+    insert into nt.players (tournament_id, account_id, user_id, name, icon, secret_hash)
+    values (tid, bid, 0, nm, ic, 'bot');
+    perform nt.event(tid, 'join', bid, jsonb_build_object('n', nm, 'i', ic));
+    added := added + 1;
+  end loop;
+  return added;
 end $$;
 
 -- Starts the live matches of round r (both seats filled; empty or departed seats forfeit).
@@ -653,7 +744,7 @@ language plpgsql volatile security definer set search_path = '' as $$
 declare
   t nt.tournaments;
   act text := coalesce(a ->> 'action', '');
-  target integer := nt.clampi(a -> 'target', 0, 2147483647, 0);
+  target integer := nt.clampi(a -> 'target', -1000, 2147483647, 0);
   ids integer[];
   n integer;
   sz integer;
@@ -760,6 +851,12 @@ begin
            name = case when a ? 'name' and nt.clean(a ->> 'name', 32) <> '' then nt.clean(a ->> 'name', 32) else name end,
            rev = rev + 1, last_activity = now()
      where id = t.id;
+
+  elsif act = 'bots' then
+    if t.state <> 'lobby' then return jsonb_build_object('error', 'state'); end if;
+    select count(*) into n from nt.players where tournament_id = t.id and status = 'in';
+    perform nt.add_bots(t.id, least(nt.clampi(a -> 'count', 1, 31, 3), t.max_players - n));
+    perform nt.bump(t.id);
 
   elsif act = 'close' then
     update nt.tournaments set state = 'closed', rev = rev + 1, last_activity = now() where id = t.id;

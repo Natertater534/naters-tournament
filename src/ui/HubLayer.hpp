@@ -23,7 +23,7 @@ namespace nt::ui {
         void refresh();
         void tick(float dt);
         void rebuildList();
-        void open(std::string const& code);
+        void open(std::string const& code, bool justJoined = false);
         void joinCode(std::string code);
         void createTournament(CreateSettings const& set);
 

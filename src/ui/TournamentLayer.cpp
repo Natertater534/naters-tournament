@@ -10,15 +10,15 @@
 using namespace geode::prelude;
 
 namespace nt::ui {
-    CCScene* TournamentLayer::scene(std::string const& code) {
+    CCScene* TournamentLayer::scene(std::string const& code, bool justJoined) {
         auto* scene = CCScene::create();
-        scene->addChild(TournamentLayer::create(code));
+        scene->addChild(TournamentLayer::create(code, justJoined));
         return scene;
     }
 
-    TournamentLayer* TournamentLayer::create(std::string const& code) {
+    TournamentLayer* TournamentLayer::create(std::string const& code, bool justJoined) {
         auto* ret = new TournamentLayer();
-        if (ret->init(code)) {
+        if (ret->init(code, justJoined)) {
             ret->autorelease();
             return ret;
         }
@@ -26,9 +26,10 @@ namespace nt::ui {
         return nullptr;
     }
 
-    bool TournamentLayer::init(std::string const& code) {
+    bool TournamentLayer::init(std::string const& code, bool justJoined) {
         if (!CCLayer::init()) return false;
         m_code = code;
+        m_justJoined = justJoined;
         m_me = me().account;
         auto win = CCDirector::get()->getWinSize();
 
@@ -205,11 +206,13 @@ namespace nt::ui {
             }
             m_backdrop->setGround(m_state.t.lobby(), false);
             m_arena->sync(m_state);
-            // a little hello for whoever is already here
+            // a little hello for whoever is already here (and a proper entrance for us)
             int i = 0;
             if (m_state.t.lobby()) {
+                if (m_justJoined && m_state.player(m_me)) m_arena->onJoin(m_state, m_me);
                 for (auto* p : m_state.activePlayers()) {
                     int acc = p->account;
+                    if (acc == m_me && m_justJoined) continue;
                     this->runAction(CCSequence::create(CCDelayTime::create(.3f + .12f * i++), CallFuncExt::create([this, acc] {
                         m_arena->onEmote(acc, 1);
                     }), nullptr));
@@ -388,7 +391,7 @@ namespace nt::ui {
 
         if (t.lobby() && !joined) {
             auto* join = textButton("Join", "GJ_button_01.png", .85f, [this](auto) { this->onJoin(); });
-            join->setPosition({win.width / 2.f, y + 2.f});
+            join->setPosition({win.width / 2.f - (host ? 120.f : 0.f), y + 2.f});
             m_bottom->addChild(join);
             if (auto* img = join->getNormalImage()) {
                 img->runAction(CCRepeatForever::create(CCSequence::create(
@@ -417,8 +420,16 @@ namespace nt::ui {
                         m->show();
                     }
                 });
-                start->setPosition({win.width / 2.f + (joined ? 0.f : 150.f), y});
+                start->setPosition({win.width / 2.f + (joined ? 75.f : 140.f), y});
                 m_bottom->addChild(start);
+                // practice bots: try the whole thing (or show it off) without a second player
+                if (t.count < t.max) {
+                    auto* bots = textButton("Add bots", "GJ_button_02.png", .5f, [this](auto) {
+                        this->host("bots", matjson::makeObject({{"count", 3}}));
+                    });
+                    bots->setPosition({win.width / 2.f + (joined ? -60.f : 10.f), y});
+                    m_bottom->addChild(bots);
+                }
             } else if (t.running()) {
                 auto* level = textButton(t.level.valid() ? "Change level" : "Pick level",
                                          t.level.valid() ? "GJ_button_04.png" : "GJ_button_02.png", .55f, [this](auto) {
