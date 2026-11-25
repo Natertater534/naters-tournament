@@ -156,7 +156,8 @@ namespace nt::ui {
             m_attacker = who;
             float lead = who == 0 ? m_lead : -m_lead;
             m_hit = fx::rnd(0.f, 1.f) < std::clamp(.22f + .34f * lead, .08f, .6f);
-            m_end = m_hit ? 116.f : 60.f;
+            // (the blade's angle on screen is this plus the body's lean: keep the tip above the floor)
+            m_end = m_hit ? 100.f : 60.f;
             m_period = fx::rnd(1.f, 1.3f);
         }
 
@@ -216,8 +217,8 @@ namespace nt::ui {
                     atkLean = lerpf(-9.f, 10.f, u);
                 } else if (ph < .48f) {
                     atkFwd = lunge;
-                    // a blocked blade bounces off the other one; a landed one follows through
-                    atkAng = m_end - (m_hit ? -6.f : 18.f) * std::sin(seg(ph, .34f, .48f) * kPi);
+                    // a blocked blade bounces off the other one; a landed one holds in them
+                    atkAng = m_end - (m_hit ? 0.f : 18.f) * std::sin(seg(ph, .34f, .48f) * kPi);
                     atkHand = thrown;
                     atkLean = 10.f;
                 } else {
@@ -1418,12 +1419,12 @@ namespace nt::ui {
         steps->addObject(CCDelayTime::create(delay));
         if (dashThrough) {
             // far enough to clear them, but not past the bend in their path or off the screen
-            float far = 30.f * sc + 12.f;
+            float beyond = 30.f * sc + 12.f;
             if (!isFinal) {
                 auto line = this->linePath(r, s);
-                if (line.size() > 1) far = std::min(far, std::abs(line[1].x - seatL.x));
+                if (line.size() > 1) beyond = std::min(beyond, std::abs(line[1].x - seatL.x));
             }
-            auto past = seatL + ccp(dir * far, 0.f);
+            auto past = seatL + ccp(dir * beyond, 0.f);
             past.x = std::clamp(past.x, 4.f + 15.f * sc, m_size.width - 4.f - 15.f * sc);
             // the loser raises a guard; the winner draws all the way back
             steps->addObject(CallFuncExt::create([winner, loser, dir, sc] {
@@ -1442,8 +1443,8 @@ namespace nt::ui {
                 this->trail(winner.data(), col::white, .3f);
                 winner->runAction(CCEaseOut::create(CCMoveTo::create(.09f, past), 3.f));
                 winner->handTo({2.f, 0.f}, .07f);
-                winner->swordTo(138.f, .08f);
-                winner->leanTo(14.f, .07f);
+                winner->swordTo(100.f, .08f);
+                winner->leanTo(10.f, .07f);
                 fx::play("whoosh", .9f, 1.25f);
                 fx::play("slice", .9f);
                 if (loser) {
@@ -1495,7 +1496,7 @@ namespace nt::ui {
                 fx::play("win");
             }));
         } else {
-            auto landing = seatL - ccp(dir * (15.f * sc + 4.f), 0.f);
+            auto landing = seatL - ccp(dir * (30.f * sc + 3.f), 0.f);
             // crouch with the sword raised overhead...
             steps->addObject(CallFuncExt::create([winner, loser] {
                 winner->handTo({-12.f, 17.f}, .22f);
@@ -1519,8 +1520,8 @@ namespace nt::ui {
             // ...and bring it down on them as they land
             steps->addObject(CallFuncExt::create([winner] {
                 winner->handTo({2.f, 0.f}, .08f);
-                winner->swordTo(150.f, .08f);
-                winner->leanTo(16.f, .08f);
+                winner->swordTo(100.f, .08f);
+                winner->leanTo(10.f, .08f);
                 fx::play("slice", .9f);
             }));
             steps->addObject(CCDelayTime::create(.08f));
