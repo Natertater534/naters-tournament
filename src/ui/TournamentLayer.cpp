@@ -14,6 +14,16 @@ namespace nt::ui {
         constexpr float kPollLobbyFast = .7f;  // the lobby polls a little faster so walking looks live
         constexpr float kMoveSendGap = .3f;    // at most this often we tell the server where we are
 
+        // a popup (emotes, confirm, player card) has the player's attention
+        bool popupOpen() {
+            auto* scene = CCDirector::get()->getRunningScene();
+            if (!scene) return false;
+            for (auto* child : CCArrayExt<CCNode*>(scene->getChildren())) {
+                if (typeinfo_cast<FLAlertLayer*>(child)) return true;
+            }
+            return false;
+        }
+
         void pulse(CCMenuItemSpriteExtra* btn) {
             auto* img = btn ? btn->getNormalImage() : nullptr;
             if (!img) return;
@@ -147,6 +157,10 @@ namespace nt::ui {
     // ---------------------------------------------------------------- walking around the lobby
 
     void TournamentLayer::keyDown(enumKeyCodes key, double timestamp) {
+        if (popupOpen()) {
+            CCLayer::keyDown(key, timestamp);
+            return;
+        }
         switch (key) {
             case KEY_A:
             case KEY_Left: m_left = true; break;
@@ -184,17 +198,8 @@ namespace nt::ui {
 
     void TournamentLayer::tickMovement(float dt) {
         if (!m_loaded || !m_state.t.lobby()) return;
-        // a popup takes the keyboard: its key-ups never reach us, so let go of everything
-        if (m_left || m_right || m_jumpHeld) {
-            if (auto* scene = CCDirector::get()->getRunningScene()) {
-                for (auto* child : CCArrayExt<CCNode*>(scene->getChildren())) {
-                    if (typeinfo_cast<FLAlertLayer*>(child)) {
-                        this->releaseKeys();
-                        break;
-                    }
-                }
-            }
-        }
+        // a popup takes the keyboard (its key-ups may never reach us): let go of everything
+        if ((m_left || m_right || m_jumpHeld) && popupOpen()) this->releaseKeys();
         // holding jump keeps hopping, like holding in a level
         if (m_jumpHeld) m_arena->jumpMe();
 
