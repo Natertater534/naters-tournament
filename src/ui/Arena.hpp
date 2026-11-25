@@ -62,6 +62,7 @@ namespace nt::ui {
         void drawLines(State const& state);
         void refreshCards(State const& state);
         float bracketScale() const;
+        float halfGap() const;
         void startClash(int round, int slot, Avatar* a, Avatar* b);
         void stopClash(int round, int slot);
         Avatar* avatarFor(State const& state, Player const& p, float scale);

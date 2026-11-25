@@ -271,13 +271,19 @@ namespace nt::ui {
     // ---------------------------------------------------------------- bracket geometry
 
     float Arena::bracketScale() const {
-        switch (m_rounds) {
-            case 1: return 1.15f;
-            case 2: return .95f;
-            case 3: return .78f;
-            case 4: return .6f;
-            default: return .48f;
-        }
+        // the default per bracket size, then shrunk until every card fits its column and row
+        float base = m_rounds <= 1 ? 1.15f : m_rounds == 2 ? .95f : m_rounds == 3 ? .78f : m_rounds == 4 ? .6f : .48f;
+        int cols = std::max(1, 2 * m_rounds - 1);
+        float colW = (m_size.width - 32.f) / cols;
+        int perSide = std::max(1, (m_size2 >> 1) / 2);
+        float step = (m_size.height - kTopPad - kBottomPad) / perSide;
+        float byW = (colW * .92f - 32.f) / 60.f;
+        float byH = (step * .9f - 10.f) / 30.f;
+        return std::clamp(std::min({base, byW, byH}), .3f, 1.2f);
+    }
+
+    float Arena::halfGap() const {
+        return 10.f + 15.f * this->bracketScale();
     }
 
     int Arena::sideOf(int round, int slot) const {
@@ -308,7 +314,7 @@ namespace nt::ui {
 
     CCPoint Arena::seatPos(int round, int slot, int which) const {
         auto c = this->cardCentre(round, slot);
-        float d = 13.f + 15.f * this->bracketScale();
+        float d = this->halfGap();
         float y = c.y - 15.f * this->bracketScale();  // avatar position = feet
         return {c.x + (which == 1 ? -d : d), y};
     }
@@ -343,20 +349,21 @@ namespace nt::ui {
         m_rays = nullptr;
 
         float sc = this->bracketScale();
-        float d = 13.f + 15.f * sc;
+        float d = this->halfGap();
         for (auto const& m : state.matches) {
             auto c = this->cardCentre(m.round, m.slot);
-            CCSize cs {2.f * d + 30.f * sc + 12.f, 30.f * sc + 16.f};
+            CCSize cs {2.f * d + 30.f * sc + 12.f, 30.f * sc + 10.f};
             auto* card = Plate::create(cs, col::plate, .78f, col::blue, .35f, 6.f, 1.2f);
             card->setAnchorPoint({.5f, .5f});
             card->setPosition(c);
             m_bracketRoot->addChild(card, 1);
             m_cards[{m.round, m.slot}] = card;
 
-            auto* p1 = label("", "bigFont.fnt", .22f + .1f * sc, col::white);
-            auto* p2 = label("", "bigFont.fnt", .22f + .1f * sc, col::white);
-            p1->setPosition(this->seatPos(m.round, m.slot, 1) + ccp(0.f, 30.f * sc + 7.f));
-            p2->setPosition(this->seatPos(m.round, m.slot, 2) + ccp(0.f, 30.f * sc + 7.f));
+            float ls = std::clamp(.16f + .14f * sc, .18f, .32f);
+            auto* p1 = label("", "bigFont.fnt", ls, col::white);
+            auto* p2 = label("", "bigFont.fnt", ls, col::white);
+            p1->setPosition(this->seatPos(m.round, m.slot, 1) + ccp(0.f, 30.f * sc + 5.f));
+            p2->setPosition(this->seatPos(m.round, m.slot, 2) + ccp(0.f, 30.f * sc + 5.f));
             m_labels->addChild(p1);
             m_labels->addChild(p2);
             m_pct[{m.round, m.slot}] = {p1, p2};
@@ -404,7 +411,7 @@ namespace nt::ui {
     void Arena::drawLines(State const& state) {
         m_lines->clear();
         float sc = this->bracketScale();
-        float d = 13.f + 15.f * sc;
+        float d = this->halfGap();
         for (auto const& m : state.matches) {
             if (m.round >= m_rounds) continue;
             auto c = this->cardCentre(m.round, m.slot);
@@ -496,7 +503,7 @@ namespace nt::ui {
                     a = this->avatarFor(state, p, sc);
                     a->setPosition(seat);
                 }
-                a->setNameVisible(m_rounds <= 4);
+                a->setNameVisible(m_rounds <= 3);
                 a->setDimmed(out, false);
                 a->setIdle(!out && !deepest->live());
             }
@@ -714,7 +721,7 @@ namespace nt::ui {
             a->setPosition(from);
             a->setScale(1.f / std::max(.4f, sc) * .85f);
             a->busy = true;
-            a->setNameVisible(m_rounds <= 4);
+            a->setNameVisible(m_rounds <= 3);
             float delay = .25f + i * .07f;
             float t = .7f;
             a->runAction(CCSequence::create(

@@ -21,7 +21,7 @@ namespace nt::ui {
         float iconScale() const { return m_scale; }
         float height() const { return 30.f * m_scale; }
         // the top of the head, in parent coordinates
-        CCPoint headWorld() const;
+        CCPoint headWorld();
 
         void setNameVisible(bool visible);
         void setNameScale(float scale);

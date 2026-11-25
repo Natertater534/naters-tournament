@@ -31,11 +31,11 @@ class $modify(NTMenuLayer, MenuLayer) {
             menu->addChild(btn);
             menu->updateLayout();
         } else {
-            auto* menu = CCMenu::create();
+            auto* own = CCMenu::create();
             auto win = CCDirector::get()->getWinSize();
-            menu->setPosition({win.width - 40.f, 40.f});
-            menu->addChild(btn);
-            this->addChild(menu);
+            own->setPosition({win.width - 40.f, 40.f});
+            own->addChild(btn);
+            this->addChild(own);
         }
         return true;
     }

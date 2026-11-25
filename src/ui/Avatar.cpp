@@ -80,7 +80,7 @@ namespace nt::ui {
         }
     }
 
-    CCPoint Avatar::headWorld() const {
+    CCPoint Avatar::headWorld() {
         return this->getPosition() + ccp(0.f, (30.f * m_scale + 2.f) * this->getScale());
     }
 
